@@ -20,7 +20,6 @@ export default function LoginPage() {
     if (hasRedirected.current) return;
     
     const controller = new AbortController();
-    let timeoutId: NodeJS.Timeout;
     
     const checkSession = async () => {
       try {
@@ -48,17 +47,14 @@ export default function LoginPage() {
         if (error instanceof Error && error.name === "AbortError") {
           return;
         }
-        console.error("Session check error:", error);
         setCheckingSession(false);
       }
     };
     
-    // Small delay to avoid race conditions during hot reload
-    timeoutId = setTimeout(checkSession, 100);
+    checkSession();
     
     return () => {
       controller.abort();
-      clearTimeout(timeoutId);
     };
   }, [router]);
 
@@ -97,23 +93,23 @@ export default function LoginPage() {
     setLoading(true);
     setError("");
 
-    // Normalize username: lowercase and replace spaces with dashes
-    const normalizedUsername = username.toLowerCase().trim().replace(/\s+/g, "-");
+    // Use username as-is (normalization only happens on team creation)
+    const trimmedUsername = username.trim();
 
     try {
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: normalizedUsername, password }),
+        body: JSON.stringify({ username: trimmedUsername, password }),
       });
 
       const data = await res.json();
 
       if (data.success) {
         if (data.isAdmin) {
-          router.push("/admin");
+          router.replace("/admin");
         } else {
-          router.push("/team");
+          router.replace("/team");
         }
       } else {
         setError(data.message || "Invalid credentials");
@@ -171,12 +167,12 @@ export default function LoginPage() {
 
           <form onSubmit={handleSubmit}>
             <div className="form-group">
-              <label>Team Name / Username</label>
+              <label>Registration Number</label>
               <input
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="Enter team name or admin"
+                placeholder="Enter registration number"
                 required
               />
             </div>

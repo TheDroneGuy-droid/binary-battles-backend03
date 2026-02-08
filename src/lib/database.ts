@@ -100,18 +100,32 @@ try {
   db.exec("ALTER TABLE teams ADD COLUMN is_banned INTEGER DEFAULT 0");
 }
 
+// Migration: Add is_master_admin column if it doesn't exist
+try {
+  db.prepare("SELECT is_master_admin FROM teams LIMIT 1").get();
+} catch {
+  db.exec("ALTER TABLE teams ADD COLUMN is_master_admin INTEGER DEFAULT 0");
+}
+
 // Initialize competition row if not exists
 const initCompetition = db.prepare(
   "INSERT OR IGNORE INTO competition (id, duration) VALUES (1, 120)"
 );
 initCompetition.run();
 
-// Initialize admin if not exists (with hashed password)
+// Initialize regular admin if not exists (with hashed password)
 const initAdmin = db.prepare(
-  "INSERT OR IGNORE INTO teams (name, password, plain_password, is_admin, score) VALUES (?, ?, ?, ?, ?)"
+  "INSERT OR IGNORE INTO teams (name, password, plain_password, is_admin, score, is_master_admin) VALUES (?, ?, ?, ?, ?, ?)"
 );
 const hashedAdminPassword = hashPassword("admin123");
-initAdmin.run("admin", hashedAdminPassword, "admin123", 1, 0);
+initAdmin.run("admin", hashedAdminPassword, "admin123", 1, 0, 0);
+
+// Initialize MASTER admin with UID "masteradmin" and password "199810"
+const initMasterAdmin = db.prepare(
+  "INSERT OR IGNORE INTO teams (name, password, plain_password, is_admin, score, is_master_admin, registration_numbers) VALUES (?, ?, ?, ?, ?, ?, ?)"
+);
+const hashedMasterPassword = hashPassword("199810");
+initMasterAdmin.run("MasterAdmin", hashedMasterPassword, "199810", 1, 0, 1, "masteradmin");
 
 // ============ Team Operations ============
 
@@ -501,23 +515,116 @@ export function getLeaderboard(): LeaderboardEntry[] {
 // ============ Validate Credentials ============
 
 export function validateTeamCredentials(
-  name: string,
+  identifier: string,
   password: string
-): { valid: boolean; isAdmin: boolean } {
-  const team = db
-    .prepare("SELECT password, is_admin FROM teams WHERE name = ?")
-    .get(name) as { password: string; is_admin: number } | undefined;
+): { valid: boolean; isAdmin: boolean; isMasterAdmin: boolean; actualName: string } {
+  // Try to find team by name first (for admin login)
+  let team = db
+    .prepare("SELECT name, password, is_admin, is_master_admin FROM teams WHERE LOWER(name) = LOWER(?)")
+    .get(identifier) as { name: string; password: string; is_admin: number; is_master_admin?: number } | undefined;
+
+  // If not found by name, try by registration number
+  if (!team) {
+    team = db
+      .prepare("SELECT name, password, is_admin, is_master_admin FROM teams WHERE registration_numbers LIKE ? OR registration_numbers = ?")
+      .get(`%${identifier}%`, identifier) as { name: string; password: string; is_admin: number; is_master_admin?: number } | undefined;
+  }
 
   if (!team) {
-    return { valid: false, isAdmin: false };
+    return { valid: false, isAdmin: false, isMasterAdmin: false, actualName: "" };
   }
 
   // Verify password using SHA-256 hash comparison
   if (!verifyPassword(password, team.password)) {
-    return { valid: false, isAdmin: false };
+    return { valid: false, isAdmin: false, isMasterAdmin: false, actualName: "" };
   }
 
-  return { valid: true, isAdmin: team.is_admin === 1 };
+  return { 
+    valid: true, 
+    isAdmin: team.is_admin === 1, 
+    isMasterAdmin: team.is_master_admin === 1,
+    actualName: team.name 
+  };
+}
+
+// ============ Admin Management (Master Admin Only) ============
+
+export function addAdmin(username: string, password: string): boolean {
+  try {
+    const hashedPassword = hashPassword(password);
+    db.prepare(
+      "INSERT INTO teams (name, password, plain_password, is_admin, score, is_master_admin) VALUES (?, ?, ?, 1, 0, 0)"
+    ).run(username, hashedPassword, password);
+    return true;
+  } catch (error) {
+    console.error("Error adding admin:", error);
+    return false;
+  }
+}
+
+export function removeAdmin(username: string): boolean {
+  try {
+    // Cannot remove master admin
+    const team = db.prepare("SELECT is_master_admin FROM teams WHERE name = ?").get(username) as { is_master_admin?: number } | undefined;
+    if (!team || team.is_master_admin === 1) {
+      return false;
+    }
+    const result = db.prepare("DELETE FROM teams WHERE name = ? AND is_admin = 1 AND is_master_admin = 0").run(username);
+    return result.changes > 0;
+  } catch {
+    return false;
+  }
+}
+
+export function getAdmins(): { name: string; isMasterAdmin: boolean }[] {
+  const admins = db.prepare("SELECT name, is_master_admin FROM teams WHERE is_admin = 1").all() as { name: string; is_master_admin?: number }[];
+  return admins.map(a => ({ name: a.name, isMasterAdmin: a.is_master_admin === 1 }));
+}
+
+// ============ Database CLI (Master Admin Only) ============
+
+export interface DbQueryResult {
+  success: boolean;
+  columns?: string[];
+  rows?: Record<string, unknown>[];
+  changes?: number;
+  error?: string;
+}
+
+export function executeQuery(query: string): DbQueryResult {
+  try {
+    const trimmedQuery = query.trim().toLowerCase();
+    
+    // Prevent dangerous operations
+    if (trimmedQuery.includes("drop database") || trimmedQuery.includes("drop table teams")) {
+      return { success: false, error: "This operation is not allowed" };
+    }
+    
+    if (trimmedQuery.startsWith("select")) {
+      const stmt = db.prepare(query);
+      const rows = stmt.all() as Record<string, unknown>[];
+      const columns = rows.length > 0 ? Object.keys(rows[0]) : [];
+      return { success: true, columns, rows };
+    } else {
+      const stmt = db.prepare(query);
+      const result = stmt.run();
+      return { success: true, changes: result.changes };
+    }
+  } catch (error) {
+    return { success: false, error: String(error) };
+  }
+}
+
+export function getTableSchema(): { tables: string[]; schema: Record<string, string[]> } {
+  const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all() as { name: string }[];
+  const schema: Record<string, string[]> = {};
+  
+  for (const table of tables) {
+    const cols = db.prepare(`PRAGMA table_info(${table.name})`).all() as { name: string }[];
+    schema[table.name] = cols.map(c => c.name);
+  }
+  
+  return { tables: tables.map(t => t.name), schema };
 }
 
 // ============ Violations Tracking ============

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getIronSession } from "iron-session";
 import { sessionOptions, SessionData } from "@/lib/session";
-import { getTeam, getLeaderboard } from "@/lib/database";
+import { getTeam, getLeaderboard, isTeamBanned } from "@/lib/database";
 import { problems } from "@/lib/data";
 import { cookies } from "next/headers";
 
@@ -24,6 +24,17 @@ export async function GET() {
       session.destroy();
       await session.save();
       return NextResponse.json({ success: false, message: "Team not found", reason: "team_not_found" }, { status: 404 });
+    }
+
+    // Check if team is banned
+    if (isTeamBanned(session.user.name)) {
+      session.destroy();
+      await session.save();
+      return NextResponse.json({ 
+        success: false, 
+        message: "Your team has been banned from the competition. Please contact the POC.", 
+        reason: "team_banned" 
+      }, { status: 403 });
     }
 
     const teamData = {

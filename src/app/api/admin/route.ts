@@ -57,6 +57,7 @@ export async function GET() {
 
     return NextResponse.json({
       success: true,
+      isMasterAdmin: session.user.isMasterAdmin || false,
       teams: teams,
       submissions: submissions,
       competition: competition,

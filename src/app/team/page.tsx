@@ -58,80 +58,61 @@ export default function TeamPage() {
   const [results, setResults] = useState<{ [key: number]: SubmissionResult }>({});
   const [loading, setLoading] = useState(true);
   const [selectedProblem, setSelectedProblem] = useState<number>(1);
-  const [lastSaved, setLastSaved] = useState<string>("");
-  const [initialized, setInitialized] = useState(false);
+  const [competitionActive, setCompetitionActive] = useState(false);
+  const [isBanned, setIsBanned] = useState(false);
+  const [banMessage, setBanMessage] = useState("");
   
   // Anti-cheat states
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const [showFullscreenWarning, setShowFullscreenWarning] = useState(false);
   const [tabViolations, setTabViolations] = useState(0);
   const [showTabWarning, setShowTabWarning] = useState(false);
-  const [showFinalWarning, setShowFinalWarning] = useState(false);
-  const [competitionActive, setCompetitionActive] = useState(false);
   
   const tabViolationsRef = useRef(0);
   const competitionActiveRef = useRef(false);
-  const codesRef = useRef<{ [key: number]: string }>({});
-  const languagesRef = useRef<{ [key: number]: string }>({});
   const hasRedirected = useRef(false);
-  const isMounted = useRef(true);
 
   // Fetch team data
   const fetchData = useCallback(async () => {
-    if (hasRedirected.current || !isMounted.current) return;
+    if (hasRedirected.current) return;
     
     try {
       const res = await fetch("/api/team");
-      
-      // Handle network errors
-      if (!res.ok && res.status >= 500) {
-        console.error("Server error:", res.status);
-        return; // Don't redirect on server errors, just retry
-      }
-      
       const data = await res.json();
 
       if (!data.success) {
         if (hasRedirected.current) return;
         
-        // Handle different failure reasons
+        if (data.reason === "team_banned") {
+          setIsBanned(true);
+          setBanMessage(data.message || "Your team has been banned. Please contact the POC.");
+          setLoading(false);
+          return;
+        }
+        
+        hasRedirected.current = true;
+        
         if (data.reason === "is_admin") {
-          hasRedirected.current = true;
           router.replace("/admin");
-        } else if (data.reason === "no_session") {
-          hasRedirected.current = true;
-          router.replace("/");
-        } else if (data.reason === "team_not_found") {
-          hasRedirected.current = true;
+        } else {
           router.replace("/");
         }
-        // For server_error or unknown, don't redirect - just stay on page
         return;
       }
+      
+      // Clear ban state if previously banned but now unbanned
+      if (isBanned) {
+        setIsBanned(false);
+        setBanMessage("");
+      }
 
-      if (isMounted.current) {
-        setTeamName(data.teamName);
-        setProblems(data.problems);
-        setTeamData(data.teamData);
-        setLeaderboard(data.leaderboard);
-        setLoading(false);
-        setInitialized(true);
-      }
+      setTeamName(data.teamName);
+      setProblems(data.problems);
+      setTeamData(data.teamData);
+      setLeaderboard(data.leaderboard);
+      setLoading(false);
     } catch (error) {
-      // Network errors - don't redirect, just log and retry on next interval
       console.error("Fetch error:", error);
-      // Only redirect if we've never successfully loaded data
-      if (!initialized && !hasRedirected.current && isMounted.current) {
-        // Wait a bit before deciding to redirect
-        setTimeout(() => {
-          if (!initialized && !hasRedirected.current && isMounted.current) {
-            hasRedirected.current = true;
-            router.replace("/");
-          }
-        }, 3000);
-      }
     }
-  }, [router, initialized]);
+  }, [router, isBanned]);
 
   // Fetch competition status
   const fetchCompetition = useCallback(async () => {
@@ -158,7 +139,6 @@ export default function TeamPage() {
           `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
         );
 
-        // Timer color based on remaining time
         if (remaining <= 60) {
           setTimerClass("danger");
         } else if (remaining <= 300) {
@@ -180,216 +160,58 @@ export default function TeamPage() {
     }
   }, []);
 
-  // Initial data fetch with cleanup
+  // Initial data fetch
   useEffect(() => {
-    isMounted.current = true;
     fetchData();
     fetchCompetition();
     const dataInterval = setInterval(fetchData, 5000);
     const timerInterval = setInterval(fetchCompetition, 1000);
     return () => {
-      isMounted.current = false;
       clearInterval(dataInterval);
       clearInterval(timerInterval);
     };
   }, [fetchData, fetchCompetition]);
 
-  // Update refs when state changes
-  useEffect(() => {
-    codesRef.current = codes;
-  }, [codes]);
-
-  useEffect(() => {
-    languagesRef.current = languages;
-  }, [languages]);
-
-  // Auto-save code every 10 seconds (reduced frequency, only current problem)
-  useEffect(() => {
-    if (!competitionActive || !initialized) return;
-    
-    let isAutoSaving = false;
-    
-    const autoSaveInterval = setInterval(async () => {
-      if (isAutoSaving || !isMounted.current) return;
-      isAutoSaving = true;
-      
-      const currentCodes = codesRef.current;
-      const currentLanguages = languagesRef.current;
-      
-      // Only save the currently selected problem to reduce API calls
-      const code = currentCodes[selectedProblem];
-      if (code && code.trim().length > 10) {
-        try {
-          await fetch("/api/submit", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              problemId: selectedProblem,
-              code,
-              language: currentLanguages[selectedProblem] || "python",
-              autoSave: true,
-            }),
-          });
-          if (isMounted.current) {
-            setLastSaved(new Date().toLocaleTimeString());
-          }
-        } catch (error) {
-          console.error("Auto-save error:", error);
-        }
-      }
-      isAutoSaving = false;
-    }, 10000);
-    
-    return () => clearInterval(autoSaveInterval);
-  }, [competitionActive, initialized, selectedProblem]);
-
-  // Fullscreen management
-  const enterFullscreen = useCallback(async () => {
+  // Report violation to server
+  const reportViolation = async (violationType: string, details: string = "") => {
     try {
-      if (document.documentElement.requestFullscreen) {
-        await document.documentElement.requestFullscreen();
-        setIsFullscreen(true);
-        setShowFullscreenWarning(false);
-      }
-    } catch (e) {
-      console.warn("Fullscreen request failed (requires user interaction):", e);
-      // Don't block the user if fullscreen fails
-      setShowFullscreenWarning(false);
+      await fetch("/api/violations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ violationType, details }),
+      });
+    } catch (error) {
+      console.error("Failed to report violation:", error);
     }
-  }, []);
+  };
 
-  // Show fullscreen prompt when competition starts (don't auto-enter - requires user gesture)
-  useEffect(() => {
-    if (competitionActive && !isFullscreen) {
-      setShowFullscreenWarning(true);
-      document.body.classList.add("no-select");
-    }
-  }, [competitionActive, isFullscreen]);
-
-  // Fullscreen change detection
-  useEffect(() => {
-    const handleFullscreenChange = () => {
-      const isFs = !!document.fullscreenElement;
-      setIsFullscreen(isFs);
-      
-      if (!isFs && competitionActiveRef.current) {
-        setShowFullscreenWarning(true);
-      }
-    };
-
-    document.addEventListener("fullscreenchange", handleFullscreenChange);
-    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
-  }, []);
-
-  // Tab visibility detection (anti-cheat) - 2 warning system
+  // Tab visibility detection (anti-cheat)
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.hidden && competitionActiveRef.current) {
         tabViolationsRef.current += 1;
         setTabViolations(tabViolationsRef.current);
-        
-        // Show final warning after 2 violations
-        if (tabViolationsRef.current >= 2) {
-          setShowFinalWarning(true);
-        } else {
-          setShowTabWarning(true);
-        }
-        
-        // Report violation to server
-        fetch("/api/events", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            type: "tab_switch",
-            team: teamName,
-            count: tabViolationsRef.current,
-          }),
-        }).catch(() => {});
+        setShowTabWarning(true);
+        // Report to server
+        reportViolation("TAB_SWITCH", `Switched away from tab (violation #${tabViolationsRef.current})`);
       }
     };
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
-  }, [teamName]);
+  }, []);
 
-  // Prevent right-click context menu
+  // Prevent right-click during competition
   useEffect(() => {
     const handleContextMenu = (e: MouseEvent) => {
       if (competitionActiveRef.current) {
         e.preventDefault();
+        // Report right-click attempt
+        reportViolation("RIGHT_CLICK", "Attempted to open context menu");
       }
     };
-
     document.addEventListener("contextmenu", handleContextMenu);
     return () => document.removeEventListener("contextmenu", handleContextMenu);
-  }, []);
-
-  // Prevent keyboard shortcuts - STRICT copy/paste and screenshot blocking
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (!competitionActiveRef.current) return;
-
-      // Block PrintScreen
-      if (e.key === "PrintScreen") {
-        e.preventDefault();
-        navigator.clipboard.writeText("");
-        alert("Screenshots are not allowed!");
-        return;
-      }
-
-      // Block ALL copy/paste/cut/select including in textareas
-      if (e.ctrlKey || e.metaKey) {
-        if (["c", "v", "x", "a", "p", "s"].includes(e.key.toLowerCase())) {
-          e.preventDefault();
-          return;
-        }
-      }
-
-      // Block F12, DevTools shortcuts
-      if (
-        e.key === "F12" ||
-        (e.ctrlKey && e.shiftKey && ["I", "J", "C", "K"].includes(e.key.toUpperCase()))
-      ) {
-        e.preventDefault();
-        return;
-      }
-
-      // Block Alt+Tab indicator (though can't fully prevent)
-      if (e.altKey && e.key === "Tab") {
-        e.preventDefault();
-      }
-    };
-
-    // Block copy/paste events directly
-    const handleCopy = (e: ClipboardEvent) => {
-      if (competitionActiveRef.current) {
-        e.preventDefault();
-      }
-    };
-
-    const handlePaste = (e: ClipboardEvent) => {
-      if (competitionActiveRef.current) {
-        e.preventDefault();
-      }
-    };
-
-    const handleCut = (e: ClipboardEvent) => {
-      if (competitionActiveRef.current) {
-        e.preventDefault();
-      }
-    };
-
-    document.addEventListener("keydown", handleKeyDown);
-    document.addEventListener("copy", handleCopy);
-    document.addEventListener("paste", handlePaste);
-    document.addEventListener("cut", handleCut);
-    
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-      document.removeEventListener("copy", handleCopy);
-      document.removeEventListener("paste", handlePaste);
-      document.removeEventListener("cut", handleCut);
-    };
   }, []);
 
   const handleSubmit = async (problemId: number) => {
@@ -429,41 +251,38 @@ export default function TeamPage() {
   const currentProblem = problems.find((p) => p.id === selectedProblem) || problems[0];
 
   if (loading) {
-    return <div className="loading">Loading...</div>;
+    return (
+      <div className="loading">
+        <div style={{ textAlign: "center", padding: "40px" }}>Loading...</div>
+      </div>
+    );
   }
 
   return (
     <>
-      {/* Final Warning Overlay - After 2+ violations */}
-      {showFinalWarning && (
-        <div className="final-warning">
-          <h2>🚨 FINAL WARNING!</h2>
-          <p>You have switched tabs {tabViolations} times.</p>
-          <p style={{ fontSize: "18px", fontWeight: "bold", marginTop: "20px" }}>
-            This is your FINAL WARNING. Any further violations may result in disqualification.
-          </p>
-          <p style={{ marginTop: "20px" }}>All violations have been recorded and reported to the admin.</p>
-          <div className="violation-count" style={{ background: "#7f1d1d" }}>{tabViolations}</div>
-          <p>Total violations</p>
-          <button
-            className="btn"
-            style={{ marginTop: "20px", maxWidth: "200px", background: "#dc2626" }}
-            onClick={() => setShowFinalWarning(false)}
-          >
-            I Understand
-          </button>
+      {/* Banned Overlay */}
+      {isBanned && (
+        <div className="banned-overlay">
+          <div className="banned-content">
+            <div className="banned-icon">🚫</div>
+            <h2>Team Banned</h2>
+            <p>{banMessage}</p>
+            <p style={{ marginTop: "20px", color: "var(--text-muted)", fontSize: "14px" }}>
+              If you believe this is an error, please contact the Point of Contact (POC) immediately.
+            </p>
+            <Link href="/api/auth/logout" className="btn" style={{ marginTop: "24px", maxWidth: "200px", display: "inline-block", textDecoration: "none" }}>
+              Logout
+            </Link>
+          </div>
         </div>
       )}
 
-      {/* Tab Switch Warning Overlay - First warning */}
-      {showTabWarning && !showFinalWarning && (
+      {/* Tab Switch Warning Overlay */}
+      {showTabWarning && (
         <div className="tab-warning">
-          <h2>⚠️ Warning: Tab Switch Detected!</h2>
+          <h2>⚠️ Tab Switch Detected!</h2>
           <p>Switching tabs or windows during the competition is not allowed.</p>
           <p>Your violation has been recorded.</p>
-          <p style={{ marginTop: "10px", fontWeight: "bold", color: "#fbbf24" }}>
-            Warning {tabViolations} of 2. Next violation is FINAL WARNING.
-          </p>
           <div className="violation-count">{tabViolations}</div>
           <p>Total violations</p>
           <button
@@ -472,30 +291,6 @@ export default function TeamPage() {
             onClick={() => setShowTabWarning(false)}
           >
             Continue
-          </button>
-        </div>
-      )}
-
-      {/* Fullscreen Warning Overlay */}
-      {showFullscreenWarning && competitionActive && (
-        <div className="fullscreen-warning">
-          <h2>⚠️ Fullscreen Recommended</h2>
-          <p>
-            For the best experience, please enter fullscreen mode during the competition.
-          </p>
-          <button
-            className="btn"
-            style={{ marginTop: "20px", maxWidth: "200px", marginRight: "10px" }}
-            onClick={enterFullscreen}
-          >
-            Enter Fullscreen
-          </button>
-          <button
-            className="btn"
-            style={{ marginTop: "20px", maxWidth: "200px", background: "var(--text-muted)" }}
-            onClick={() => setShowFullscreenWarning(false)}
-          >
-            Continue Without
           </button>
         </div>
       )}
@@ -541,9 +336,6 @@ export default function TeamPage() {
                 className={`status-indicator ${statusClass} ${selectedProblem === p.id ? "active" : ""}`}
                 onClick={() => setSelectedProblem(p.id)}
                 title={`Problem ${p.id}: ${p.title}`}
-                style={{
-                  border: selectedProblem === p.id ? "2px solid var(--accent-primary)" : undefined,
-                }}
               >
                 {p.id}
               </div>
@@ -551,7 +343,7 @@ export default function TeamPage() {
           })}
         </div>
 
-        {/* Problems Container - LeetCode Style */}
+        {/* Problems Container */}
         <div className="problems-container">
           {/* Sidebar - Problem List */}
           <div className="problems-sidebar">
@@ -591,8 +383,8 @@ export default function TeamPage() {
                   <div className="section-title">Examples</div>
                   {currentProblem.examples.map((ex, idx) => (
                     <div key={idx} className="example-box">
-                      <div className="example-label">EXAMPLE {idx + 1}</div>
-                      <pre>{`Input:\n${ex.input}\n\nOutput:\n${ex.output}`}</pre>
+                      <div className="example-label">Example {idx + 1}</div>
+                      <pre>Input:{"\n"}{ex.input}{"\n\n"}Output:{"\n"}{ex.output}</pre>
                     </div>
                   ))}
                 </div>
@@ -610,18 +402,10 @@ export default function TeamPage() {
                         }))
                       }
                     >
-                      <option value="python">Python 3.11</option>
-                      <option value="cpp">C++ (g++ 13)</option>
-                      <option value="c">C (gcc 13)</option>
-                      <option value="java">Java 21</option>
-                      <option value="rust">Rust 1.75</option>
-                      <option value="javascript">JavaScript (Node.js)</option>
-                      <option value="typescript">TypeScript</option>
-                      <option value="go">Go 1.21</option>
-                      <option value="csharp">C# (.NET 8)</option>
-                      <option value="kotlin">Kotlin</option>
-                      <option value="swift">Swift 5.9</option>
-                      <option value="ruby">Ruby 3.2</option>
+                      <option value="python">Python</option>
+                      <option value="cpp">C++</option>
+                      <option value="java">Java</option>
+                      <option value="c">C</option>
                     </select>
                   </div>
                   
@@ -640,11 +424,6 @@ export default function TeamPage() {
                   </div>
 
                   <div className="code-editor-footer">
-                    {lastSaved && (
-                      <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>
-                        Auto-saved: {lastSaved}
-                      </span>
-                    )}
                     {results[currentProblem.id] && (
                       <div
                         className={`result-badge ${
@@ -706,7 +485,7 @@ export default function TeamPage() {
           </table>
         </div>
 
-        {/* Violations Counter (visible in corner) */}
+        {/* Violations Counter */}
         {tabViolations > 0 && (
           <div
             style={{
@@ -726,7 +505,6 @@ export default function TeamPage() {
           </div>
         )}
       </div>
-      <div className="dev-footer">developed by NEVIN</div>
     </>
   );
 }

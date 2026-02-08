@@ -62,6 +62,16 @@ interface CompetitionStats {
   problemStats: { problemId: number; solved: number; attempted: number }[];
 }
 
+interface Admin {
+  name: string;
+  isMasterAdmin: boolean;
+}
+
+interface DbSchema {
+  tables: string[];
+  schema: Record<string, string[]>;
+}
+
 export default function AdminPage() {
   const router = useRouter();
   const [teams, setTeams] = useState<Teams>({});
@@ -86,16 +96,37 @@ export default function AdminPage() {
   const [threeLoaded, setThreeLoaded] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState<string>("");
-  const [activeTab, setActiveTab] = useState<"overview" | "teams" | "monitoring" | "submissions">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "teams" | "monitoring" | "submissions" | "master">("overview");
   const isFirstLoad = useRef(true);
+  
+  // Master Admin States
+  const [isMasterAdmin, setIsMasterAdmin] = useState(false);
+  const [admins, setAdmins] = useState<Admin[]>([]);
+  const [newAdminName, setNewAdminName] = useState("");
+  const [newAdminPassword, setNewAdminPassword] = useState("");
+  const [dbSchema, setDbSchema] = useState<DbSchema | null>(null);
+  const [sqlQuery, setSqlQuery] = useState("");
+  const [queryResult, setQueryResult] = useState<{
+    success: boolean;
+    columns?: string[];
+    rows?: Record<string, unknown>[];
+    changes?: number;
+    error?: string;
+  } | null>(null);
+  const [selectedTable, setSelectedTable] = useState("");
+  const [dbActionMessage, setDbActionMessage] = useState("");
+  const hasRedirected = useRef(false);
 
   const fetchData = useCallback(async () => {
+    if (hasRedirected.current) return;
+    
     try {
       const res = await fetch("/api/admin");
       const data = await res.json();
 
       if (!data.success) {
-        router.push("/");
+        hasRedirected.current = true;
+        router.replace("/");
         return;
       }
 
@@ -105,6 +136,31 @@ export default function AdminPage() {
       setLeaderboard(data.leaderboard);
       setViolations(data.violations || []);
       setStats(data.stats || null);
+      setIsMasterAdmin(data.isMasterAdmin || false);
+      
+      // Fetch master admin specific data
+      if (data.isMasterAdmin && isFirstLoad.current) {
+        // Fetch admins list
+        fetch("/api/admin/manage-admins")
+          .then(res => res.json())
+          .then(adminData => {
+            if (adminData.success) {
+              setAdmins(adminData.admins);
+            }
+          })
+          .catch(console.error);
+        
+        // Fetch database schema
+        fetch("/api/admin/database")
+          .then(res => res.json())
+          .then(schemaData => {
+            if (schemaData.success) {
+              setDbSchema({ tables: schemaData.tables, schema: schemaData.schema });
+            }
+          })
+          .catch(console.error);
+      }
+      
       // Only set duration on initial load, not on every refresh
       if (isFirstLoad.current) {
         setDuration(data.competition.duration || 120);
@@ -112,7 +168,10 @@ export default function AdminPage() {
       }
       setLoading(false);
     } catch {
-      router.push("/");
+      if (!hasRedirected.current) {
+        hasRedirected.current = true;
+        router.replace("/");
+      }
     }
   }, [router]);
 
@@ -359,6 +418,108 @@ export default function AdminPage() {
     });
   };
 
+  // ============ Master Admin Functions ============
+  
+  const addNewAdmin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newAdminName || !newAdminPassword) {
+      setDbActionMessage("Username and password required");
+      return;
+    }
+    
+    try {
+      const res = await fetch("/api/admin/manage-admins", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "add", username: newAdminName, password: newAdminPassword }),
+      });
+      const data = await res.json();
+      setDbActionMessage(data.message);
+      if (data.success) {
+        setNewAdminName("");
+        setNewAdminPassword("");
+        // Refresh admins list
+        const adminsRes = await fetch("/api/admin/manage-admins");
+        const adminsData = await adminsRes.json();
+        if (adminsData.success) setAdmins(adminsData.admins);
+      }
+    } catch (error) {
+      console.error("Add admin error:", error);
+      setDbActionMessage("Failed to add admin");
+    }
+  };
+
+  const removeAdminUser = async (username: string) => {
+    if (!confirm(`Remove admin "${username}"?`)) return;
+    
+    try {
+      const res = await fetch("/api/admin/manage-admins", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "remove", username }),
+      });
+      const data = await res.json();
+      setDbActionMessage(data.message);
+      if (data.success) {
+        const adminsRes = await fetch("/api/admin/manage-admins");
+        const adminsData = await adminsRes.json();
+        if (adminsData.success) setAdmins(adminsData.admins);
+      }
+    } catch (error) {
+      console.error("Remove admin error:", error);
+      setDbActionMessage("Failed to remove admin");
+    }
+  };
+
+  const executeDbQuery = async () => {
+    if (!sqlQuery.trim()) {
+      setQueryResult({ success: false, error: "Please enter a SQL query" });
+      return;
+    }
+    
+    try {
+      const res = await fetch("/api/admin/database", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: sqlQuery }),
+      });
+      const data = await res.json();
+      setQueryResult(data);
+    } catch (error) {
+      console.error("Query error:", error);
+      setQueryResult({ success: false, error: "Failed to execute query" });
+    }
+  };
+
+  const loadTableData = async (tableName: string) => {
+    setSelectedTable(tableName);
+    setSqlQuery(`SELECT * FROM ${tableName} LIMIT 100`);
+    
+    try {
+      const res = await fetch("/api/admin/database", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: `SELECT * FROM ${tableName} LIMIT 100` }),
+      });
+      const data = await res.json();
+      setQueryResult(data);
+    } catch (error) {
+      console.error("Load table error:", error);
+    }
+  };
+
+  const refreshSchema = async () => {
+    try {
+      const res = await fetch("/api/admin/database");
+      const data = await res.json();
+      if (data.success) {
+        setDbSchema({ tables: data.tables, schema: data.schema });
+      }
+    } catch (error) {
+      console.error("Refresh schema error:", error);
+    }
+  };
+
   if (loading) {
     return <div className="loading">Loading...</div>;
   }
@@ -448,6 +609,15 @@ export default function AdminPage() {
           >
             📝 Submissions
           </button>
+          {isMasterAdmin && (
+            <button 
+              className={`btn ${activeTab === "master" ? "" : "btn-secondary"}`}
+              onClick={() => setActiveTab("master")}
+              style={{ background: activeTab === "master" ? "#9333ea" : undefined }}
+            >
+              👑 Master Admin
+            </button>
+          )}
         </div>
 
         {/* Statistics Cards - Always visible */}
@@ -890,6 +1060,231 @@ export default function AdminPage() {
               </p>
             )}
           </div>
+          </>
+        )}
+
+        {/* Master Admin Tab */}
+        {activeTab === "master" && isMasterAdmin && (
+          <>
+            <div style={{ 
+              background: "linear-gradient(135deg, #9333ea22, #581c8722)", 
+              border: "1px solid #9333ea",
+              borderRadius: "8px",
+              padding: "15px",
+              marginBottom: "20px"
+            }}>
+              <h3 style={{ color: "#9333ea", margin: 0 }}>👑 Master Admin Control Panel</h3>
+              <p style={{ color: "var(--text-secondary)", fontSize: "13px", margin: "5px 0 0 0" }}>
+                Full database access and admin management
+              </p>
+            </div>
+
+            <div className="admin-controls">
+              {/* Admin Management */}
+              <div className="admin-card">
+                <h3>🔐 Manage Administrators</h3>
+                {dbActionMessage && (
+                  <p style={{ 
+                    padding: "10px", 
+                    borderRadius: "6px", 
+                    background: dbActionMessage.includes("success") ? "rgba(74,222,128,0.2)" : "rgba(248,113,113,0.2)",
+                    color: dbActionMessage.includes("success") ? "#4ade80" : "#f87171",
+                    marginBottom: "15px"
+                  }}>
+                    {dbActionMessage}
+                  </p>
+                )}
+                
+                <form onSubmit={addNewAdmin} style={{ marginBottom: "20px" }}>
+                  <div className="form-group">
+                    <label>New Admin Username</label>
+                    <input
+                      type="text"
+                      value={newAdminName}
+                      onChange={(e) => setNewAdminName(e.target.value)}
+                      placeholder="admin_username"
+                      pattern="[a-zA-Z0-9_]+"
+                      title="Only letters, numbers, and underscores"
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>Password</label>
+                    <input
+                      type="password"
+                      value={newAdminPassword}
+                      onChange={(e) => setNewAdminPassword(e.target.value)}
+                      placeholder="Min 6 characters"
+                      minLength={6}
+                    />
+                  </div>
+                  <button type="submit" className="btn">
+                    Add Admin
+                  </button>
+                </form>
+
+                <h4 style={{ marginBottom: "10px" }}>Current Admins:</h4>
+                <div style={{ maxHeight: "200px", overflowY: "auto" }}>
+                  {admins.map((admin) => (
+                    <div key={admin.name} style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      padding: "10px",
+                      borderBottom: "1px solid var(--border-color)",
+                      background: admin.isMasterAdmin ? "rgba(147,51,234,0.1)" : "transparent"
+                    }}>
+                      <span>
+                        <strong>{admin.name}</strong>
+                        {admin.isMasterAdmin && (
+                          <span style={{ marginLeft: "8px", color: "#9333ea", fontSize: "11px" }}>👑 Master</span>
+                        )}
+                      </span>
+                      {!admin.isMasterAdmin && (
+                        <button
+                          className="btn btn-small"
+                          style={{ background: "#dc2626", fontSize: "11px", padding: "4px 8px" }}
+                          onClick={() => removeAdminUser(admin.name)}
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Database Schema */}
+              <div className="admin-card">
+                <h3 style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span>🗄️ Database Tables</span>
+                  <button className="btn btn-small" onClick={refreshSchema} style={{ fontSize: "11px" }}>
+                    Refresh
+                  </button>
+                </h3>
+                {dbSchema && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                    {dbSchema.tables.map((table) => (
+                      <div key={table}>
+                        <button
+                          style={{
+                            width: "100%",
+                            textAlign: "left",
+                            padding: "10px",
+                            background: selectedTable === table ? "#9333ea" : "var(--bg-tertiary)",
+                            border: "1px solid var(--border-color)",
+                            borderRadius: "6px",
+                            color: "var(--text-primary)",
+                            cursor: "pointer",
+                            fontWeight: selectedTable === table ? "bold" : "normal"
+                          }}
+                          onClick={() => loadTableData(table)}
+                        >
+                          📋 {table}
+                          <span style={{ fontSize: "11px", color: "var(--text-secondary)", marginLeft: "10px" }}>
+                            ({dbSchema.schema[table]?.length || 0} columns)
+                          </span>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* SQL CLI */}
+            <div className="admin-card">
+              <h3>💻 Database CLI</h3>
+              <div style={{ display: "flex", gap: "10px", marginBottom: "15px" }}>
+                <textarea
+                  value={sqlQuery}
+                  onChange={(e) => setSqlQuery(e.target.value)}
+                  placeholder="Enter SQL query... (e.g., SELECT * FROM teams LIMIT 10)"
+                  style={{
+                    flex: 1,
+                    minHeight: "80px",
+                    background: "#1a1a2e",
+                    border: "1px solid var(--border-color)",
+                    borderRadius: "6px",
+                    padding: "10px",
+                    color: "#4ade80",
+                    fontFamily: "monospace",
+                    resize: "vertical"
+                  }}
+                />
+              </div>
+              <div style={{ display: "flex", gap: "10px", marginBottom: "15px" }}>
+                <button className="btn" onClick={executeDbQuery}>
+                  ▶ Execute Query
+                </button>
+                <button className="btn btn-secondary" onClick={() => { setSqlQuery(""); setQueryResult(null); }}>
+                  Clear
+                </button>
+              </div>
+
+              {/* Query Result */}
+              {queryResult && (
+                <div style={{
+                  background: "#0d1117",
+                  border: "1px solid var(--border-color)",
+                  borderRadius: "8px",
+                  padding: "15px",
+                  maxHeight: "400px",
+                  overflowY: "auto"
+                }}>
+                  {queryResult.error ? (
+                    <div style={{ color: "#f87171" }}>
+                      ❌ Error: {queryResult.error}
+                    </div>
+                  ) : queryResult.rows ? (
+                    <>
+                      <div style={{ color: "#4ade80", marginBottom: "10px" }}>
+                        ✓ Query returned {queryResult.rows.length} row(s)
+                      </div>
+                      <div style={{ overflowX: "auto" }}>
+                        <table style={{ width: "100%", fontSize: "12px", borderCollapse: "collapse" }}>
+                          <thead>
+                            <tr style={{ background: "#161b22" }}>
+                              {queryResult.columns?.map((col) => (
+                                <th key={col} style={{ 
+                                  padding: "8px", 
+                                  textAlign: "left", 
+                                  borderBottom: "1px solid var(--border-color)",
+                                  color: "#9333ea"
+                                }}>
+                                  {col}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {queryResult.rows.map((row, idx) => (
+                              <tr key={idx} style={{ background: idx % 2 === 0 ? "transparent" : "#161b22" }}>
+                                {queryResult.columns?.map((col) => (
+                                  <td key={col} style={{ 
+                                    padding: "8px", 
+                                    borderBottom: "1px solid var(--border-color)",
+                                    maxWidth: "200px",
+                                    overflow: "hidden",
+                                    textOverflow: "ellipsis",
+                                    whiteSpace: "nowrap"
+                                  }}>
+                                    {String(row[col] ?? "NULL")}
+                                  </td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  ) : (
+                    <div style={{ color: "#4ade80" }}>
+                      ✓ Query executed successfully. {queryResult.changes} row(s) affected.
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </>
         )}
       </div>

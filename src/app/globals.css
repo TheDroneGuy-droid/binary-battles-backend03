@@ -1050,7 +1050,8 @@ body.no-select {
 /* Anti-cheat Overlays */
 .tab-warning,
 .fullscreen-warning,
-.not-started-overlay {
+.not-started-overlay,
+.banned-overlay {
   position: fixed;
   top: 0;
   left: 0;
@@ -1064,6 +1065,32 @@ body.no-select {
   z-index: 10000;
   text-align: center;
   padding: 40px;
+}
+
+.banned-overlay {
+  background: rgba(26, 26, 46, 0.99);
+}
+
+.banned-content {
+  text-align: center;
+  max-width: 500px;
+}
+
+.banned-icon {
+  font-size: 80px;
+  margin-bottom: 24px;
+}
+
+.banned-content h2 {
+  font-size: 32px;
+  color: var(--accent-error);
+  margin-bottom: 16px;
+}
+
+.banned-content p {
+  font-size: 16px;
+  color: var(--text-secondary);
+  line-height: 1.6;
 }
 
 .tab-warning h2,
