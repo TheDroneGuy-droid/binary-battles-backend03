@@ -196,7 +196,7 @@ export default function LoginPage() {
           </form>
         </div>
       </div>
-      <div className="dev-footer">developed by murli sharma</div>
+      <div className="dev-footer">developed by NEVIN</div>
     </>
   );
 }

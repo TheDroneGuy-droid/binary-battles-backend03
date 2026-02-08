@@ -726,7 +726,7 @@ export default function TeamPage() {
           </div>
         )}
       </div>
-      <div className="dev-footer">developed by murli sharma</div>
+      <div className="dev-footer">developed by NEVIN</div>
     </>
   );
 }

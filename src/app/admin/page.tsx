@@ -893,7 +893,7 @@ export default function AdminPage() {
           </>
         )}
       </div>
-      <div className="dev-footer">developed by murli sharma</div>
+      <div className="dev-footer">developed by NEVIN</div>
     </>
   );
 }
