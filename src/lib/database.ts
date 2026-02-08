@@ -130,7 +130,7 @@ export interface Team {
 export function getTeam(name: string): Team | null {
   const team = db
     .prepare("SELECT * FROM teams WHERE name = ?")
-    .get(name) as { name: string; password: string; plain_password: string; is_admin: number; score: number; team_size: number; registration_numbers: string; is_banned: number } | undefined;
+    .get(name) as { name: string; password: string; plain_password: string; is_admin: number; score: number; team_size: number; registration_numbers: string; is_banned?: number } | undefined;
 
   if (!team) return null;
 
@@ -164,7 +164,7 @@ export function getAllTeams(): Team[] {
     score: number;
     team_size: number;
     registration_numbers: string;
-    is_banned: number;
+    is_banned?: number;
   }[];
 
   return teams.map((team) => {
@@ -263,8 +263,13 @@ export function unbanTeam(name: string): boolean {
 }
 
 export function isTeamBanned(name: string): boolean {
-  const team = db.prepare("SELECT is_banned FROM teams WHERE name = ?").get(name) as { is_banned: number } | undefined;
-  return team?.is_banned === 1;
+  try {
+    const team = db.prepare("SELECT is_banned FROM teams WHERE name = ?").get(name) as { is_banned: number } | undefined;
+    return team?.is_banned === 1;
+  } catch {
+    // Column might not exist in older databases
+    return false;
+  }
 }
 
 export function addSolvedProblem(teamName: string, problemId: number): void {
