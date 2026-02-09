@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getIronSession } from "iron-session";
 import { sessionOptions, SessionData } from "@/lib/session";
-import { stopCompetition } from "@/lib/database";
+import { stopCompetition, clearRelayState } from "@/lib/database";
 import { cookies } from "next/headers";
 
 // Disable caching
@@ -18,7 +18,9 @@ export async function POST() {
     );
   }
 
+  // Stop competition and clear all relay states
   stopCompetition();
+  clearRelayState();
 
   return NextResponse.json({ success: true });
 }

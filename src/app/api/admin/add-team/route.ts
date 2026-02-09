@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getIronSession } from "iron-session";
 import { sessionOptions, SessionData } from "@/lib/session";
-import { addTeam, getTeam } from "@/lib/database";
+import { addTeam, getTeam, setTeamMembers } from "@/lib/database";
 import { cookies } from "next/headers";
 
 // Disable caching
@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { teamName, password, teamSize = 1, registrationNumbers = "" } = await request.json();
+  const { teamName, password, teamSize = 2, registrationNumbers = "", memberIds = [] } = await request.json();
 
   // Normalize the team name
   const normalizedTeamName = normalizeTeamName(teamName);
@@ -36,6 +36,31 @@ export async function POST(request: NextRequest) {
   if (!normalizedTeamName) {
     return NextResponse.json(
       { success: false, message: "Invalid team name" },
+      { status: 400 }
+    );
+  }
+
+  // Parse member IDs from registrationNumbers if not provided separately
+  let members: string[] = memberIds;
+  if (members.length === 0 && registrationNumbers) {
+    // Split by comma, semicolon, or newline
+    members = registrationNumbers
+      .split(/[,;\n]+/)
+      .map((id: string) => id.trim())
+      .filter((id: string) => id.length > 0);
+  }
+
+  // Validate team size (2-4 members for relay)
+  if (members.length < 2) {
+    return NextResponse.json(
+      { success: false, message: "Team must have at least 2 members for relay mode" },
+      { status: 400 }
+    );
+  }
+
+  if (members.length > 4) {
+    return NextResponse.json(
+      { success: false, message: "Team can have maximum 4 members" },
       { status: 400 }
     );
   }
@@ -49,7 +74,8 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const success = addTeam(normalizedTeamName, password, teamSize, registrationNumbers);
+  // Add the team
+  const success = addTeam(normalizedTeamName, password, members.length, registrationNumbers);
   
   if (!success) {
     return NextResponse.json(
@@ -58,5 +84,20 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  return NextResponse.json({ success: true, teamName: normalizedTeamName });
+  // Add team members for relay
+  const membersAdded = setTeamMembers(normalizedTeamName, members);
+  
+  if (!membersAdded) {
+    return NextResponse.json(
+      { success: false, message: "Team created but failed to add members" },
+      { status: 500 }
+    );
+  }
+
+  return NextResponse.json({ 
+    success: true, 
+    teamName: normalizedTeamName,
+    memberCount: members.length,
+    members: members,
+  });
 }

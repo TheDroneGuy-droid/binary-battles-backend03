@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getIronSession } from "iron-session";
 import { sessionOptions, SessionData, generateSessionId } from "@/lib/session";
-import { validateTeamCredentials, isTeamBanned, validateTeamByRegistration } from "@/lib/database";
+import { validateTeamCredentials, isTeamBanned, validateMemberLogin } from "@/lib/database";
 import { cookies } from "next/headers";
 
 // Disable caching for login endpoint
@@ -15,22 +15,22 @@ export async function POST(request: NextRequest) {
   try {
     const { username, password, registrationOnly } = await request.json();
 
-    // Allow login with just registration number (no password) for participants
+    // Allow login with just registration/member ID (no password) for participants
     if (registrationOnly && username) {
       const session = await getIronSession<SessionData>(await cookies(), sessionOptions);
       
-      // Validate by registration number only
-      const result = validateTeamByRegistration(username.trim());
+      // Validate by member ID (individual team member)
+      const result = validateMemberLogin(username.trim());
       
       if (!result.valid) {
         return NextResponse.json(
-          { success: false, message: "Registration number not found. Please contact admin." },
+          { success: false, message: "Member ID not found. Please check your registration number." },
           { status: 401 }
         );
       }
       
       // Check if team is banned
-      if (isTeamBanned(result.actualName)) {
+      if (isTeamBanned(result.teamName)) {
         return NextResponse.json(
           { success: false, message: "Your team has been banned from the competition" },
           { status: 403 }
@@ -40,10 +40,12 @@ export async function POST(request: NextRequest) {
       // Generate unique session ID for this login
       const sessionId = generateSessionId();
       const allowedPath = "/team";
+      const memberId = username.trim().toLowerCase();
 
-      // Store session
+      // Store session with memberId for relay tracking
       session.user = { 
-        name: result.actualName, 
+        name: result.teamName, 
+        memberId: memberId,
         isAdmin: false, 
         isMasterAdmin: false, 
         sessionId, 
@@ -51,7 +53,14 @@ export async function POST(request: NextRequest) {
       };
       await session.save();
       
-      return NextResponse.json({ success: true, isAdmin: false, isMasterAdmin: false, sessionId });
+      return NextResponse.json({ 
+        success: true, 
+        isAdmin: false, 
+        isMasterAdmin: false, 
+        sessionId,
+        teamName: result.teamName,
+        memberId: memberId,
+      });
     }
 
     // Traditional login with username and password (for admins)
@@ -87,7 +96,14 @@ export async function POST(request: NextRequest) {
     const allowedPath = isAdmin ? "/admin" : "/team";
 
     // Store session with sessionId, allowed path, and master admin status
-    session.user = { name: actualName, isAdmin, isMasterAdmin, sessionId, allowedPath };
+    session.user = { 
+      name: actualName, 
+      memberId: isAdmin ? "admin" : username.trim().toLowerCase(),
+      isAdmin, 
+      isMasterAdmin, 
+      sessionId, 
+      allowedPath 
+    };
     await session.save();
     
     return NextResponse.json({ success: true, isAdmin, isMasterAdmin, sessionId });

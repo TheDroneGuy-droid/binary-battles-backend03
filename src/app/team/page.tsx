@@ -72,6 +72,29 @@ interface TestCaseResult {
   error?: string;
 }
 
+interface RelayMember {
+  id: string;
+  name: string;
+  index: number;
+}
+
+interface RelayState {
+  relayActive: boolean;
+  isActiveEditor: boolean;
+  currentMember: {
+    id: string;
+    index: number;
+    name: string;
+  } | null;
+  relayNumber: number;
+  relayDuration: number;
+  remainingSeconds: number;
+  relayEndTime: number;
+  sharedCode: string;
+  sharedLanguage: string;
+  members: RelayMember[];
+}
+
 export default function TeamPage() {
   const router = useRouter();
   const [teamName, setTeamName] = useState("");
@@ -109,11 +132,89 @@ export default function TeamPage() {
   const [tabViolations, setTabViolations] = useState(0);
   const [showTabWarning, setShowTabWarning] = useState(false);
   
+  // Relay race states
+  const [relayState, setRelayState] = useState<RelayState>({
+    relayActive: false,
+    isActiveEditor: false,
+    currentMember: null,
+    relayNumber: 0,
+    relayDuration: 5,
+    remainingSeconds: 0,
+    relayEndTime: 0,
+    sharedCode: "",
+    sharedLanguage: "python",
+    members: [],
+  });
+  const [relayTimer, setRelayTimer] = useState("--:--");
+  const [memberId, setMemberId] = useState("");
+  
   const tabViolationsRef = useRef(0);
   const competitionActiveRef = useRef(false);
   const hasRedirected = useRef(false);
   const retryCountRef = useRef(0);
   const maxRetries = 3;
+  const lastCodeSyncRef = useRef("");
+  const codeSyncIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Fetch relay state
+  const fetchRelayState = useCallback(async () => {
+    try {
+      const res = await fetch("/api/relay", {
+        credentials: "include",
+        cache: "no-store",
+      });
+      const data = await res.json();
+      
+      if (data.success) {
+        setRelayState({
+          relayActive: data.relayActive || false,
+          isActiveEditor: data.isActiveEditor || false,
+          currentMember: data.currentMember || null,
+          relayNumber: data.relayNumber || 0,
+          relayDuration: data.relayDuration || 5,
+          remainingSeconds: data.remainingSeconds || 0,
+          relayEndTime: data.relayEndTime || 0,
+          sharedCode: data.sharedCode || "",
+          sharedLanguage: data.sharedLanguage || "python",
+          members: data.members || [],
+        });
+        
+        // If not active editor, sync code from server
+        if (data.relayActive && !data.isActiveEditor && selectedProblem) {
+          // Only update if code is different (prevent cursor reset)
+          if (data.sharedCode !== lastCodeSyncRef.current) {
+            lastCodeSyncRef.current = data.sharedCode;
+            setCodes(prev => ({
+              ...prev,
+              [selectedProblem]: data.sharedCode || "",
+            }));
+            setLanguages(prev => ({
+              ...prev,
+              [selectedProblem]: data.sharedLanguage || "python",
+            }));
+          }
+        }
+      }
+    } catch (error) {
+      console.error("Relay fetch error:", error);
+    }
+  }, [selectedProblem]);
+
+  // Sync code to server when active editor types
+  const syncCodeToServer = useCallback(async (code: string, language: string) => {
+    if (!relayState.isActiveEditor) return;
+    
+    try {
+      await fetch("/api/relay", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, language }),
+        credentials: "include",
+      });
+    } catch (error) {
+      console.error("Code sync error:", error);
+    }
+  }, [relayState.isActiveEditor]);
 
   // Fetch team data with retry logic for session establishment
   const fetchData = useCallback(async () => {
@@ -244,6 +345,63 @@ export default function TeamPage() {
     };
   }, [fetchData, fetchCompetition]);
 
+  // Relay state polling and timer
+  useEffect(() => {
+    if (!competitionActive) return;
+    
+    // Fetch relay state every second
+    fetchRelayState();
+    const relayInterval = setInterval(fetchRelayState, 1000);
+    
+    return () => {
+      clearInterval(relayInterval);
+    };
+  }, [competitionActive, fetchRelayState]);
+
+  // Update relay timer display
+  useEffect(() => {
+    if (!relayState.relayActive) {
+      setRelayTimer("--:--");
+      return;
+    }
+    
+    const updateTimer = () => {
+      const now = Date.now();
+      const remaining = Math.max(0, Math.floor((relayState.relayEndTime - now) / 1000));
+      const mins = Math.floor(remaining / 60);
+      const secs = remaining % 60;
+      setRelayTimer(`${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`);
+    };
+    
+    updateTimer();
+    const timerInterval = setInterval(updateTimer, 1000);
+    
+    return () => clearInterval(timerInterval);
+  }, [relayState.relayActive, relayState.relayEndTime]);
+
+  // Sync code to server when active editor (debounced)
+  useEffect(() => {
+    if (!relayState.isActiveEditor || !selectedProblem) return;
+    
+    // Clear existing interval
+    if (codeSyncIntervalRef.current) {
+      clearInterval(codeSyncIntervalRef.current);
+    }
+    
+    // Sync code every 2 seconds when actively editing
+    codeSyncIntervalRef.current = setInterval(() => {
+      const currentCode = codes[selectedProblem] || "";
+      const currentLanguage = languages[selectedProblem] || "python";
+      syncCodeToServer(currentCode, currentLanguage);
+    }, 2000);
+    
+    return () => {
+      if (codeSyncIntervalRef.current) {
+        clearInterval(codeSyncIntervalRef.current);
+      }
+    };
+  }, [relayState.isActiveEditor, selectedProblem, codes, languages, syncCodeToServer]);
+
   // Report violation to server
   const reportViolation = async (violationType: string, details: string = "") => {
     try {
@@ -288,6 +446,8 @@ export default function TeamPage() {
   // Compile code without submitting
   const handleCompile = async () => {
     if (!selectedProblem) return;
+    // Only active editor can compile in relay mode
+    if (relayState.relayActive && !relayState.isActiveEditor) return;
     
     setCompiling(true);
     setCompileResult(null);
@@ -321,6 +481,8 @@ export default function TeamPage() {
   // Run test cases against code
   const handleRunTests = async () => {
     if (!selectedProblem) return;
+    // Only active editor can run tests in relay mode
+    if (relayState.relayActive && !relayState.isActiveEditor) return;
     
     setRunningTests(true);
     setTestResults([]);
@@ -358,6 +520,9 @@ export default function TeamPage() {
   };
 
   const handleSubmit = async (problemId: number) => {
+    // Only active editor can submit in relay mode
+    if (relayState.relayActive && !relayState.isActiveEditor) return;
+    
     setSubmitting((prev) => ({ ...prev, [problemId]: true }));
 
     try {
@@ -590,8 +755,93 @@ export default function TeamPage() {
                 </div>
 
                 <div className="code-editor-container">
+                  {/* Relay Status Banner */}
+                  {relayState.relayActive && (
+                    <div 
+                      className="relay-status-banner"
+                      style={{
+                        background: relayState.isActiveEditor 
+                          ? "linear-gradient(135deg, rgba(0, 200, 83, 0.2), rgba(0, 150, 60, 0.2))"
+                          : "linear-gradient(135deg, rgba(255, 165, 0, 0.2), rgba(200, 100, 0, 0.2))",
+                        border: `2px solid ${relayState.isActiveEditor ? "#00c853" : "#ffa500"}`,
+                        borderRadius: "8px",
+                        padding: "12px 16px",
+                        marginBottom: "12px",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+                        <div>
+                          <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>RELAY #{relayState.relayNumber}</span>
+                          <div style={{ fontWeight: 600, fontSize: "16px" }}>
+                            {relayState.isActiveEditor ? (
+                              <span style={{ color: "#00c853" }}>✏️ YOUR TURN - You can edit!</span>
+                            ) : (
+                              <span style={{ color: "#ffa500" }}>
+                                👀 {relayState.currentMember?.name || "Teammate"} is coding
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div style={{ textAlign: "right" }}>
+                        <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>Relay Timer</div>
+                        <div style={{ 
+                          fontFamily: "monospace", 
+                          fontSize: "24px", 
+                          fontWeight: 700,
+                          color: parseInt(relayTimer.split(":")[0]) === 0 && parseInt(relayTimer.split(":")[1]) <= 30 
+                            ? "#ff4444" 
+                            : "var(--text-primary)"
+                        }}>
+                          {relayTimer}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Team Members List */}
+                  {relayState.relayActive && relayState.members.length > 0 && (
+                    <div style={{
+                      display: "flex",
+                      gap: "8px",
+                      marginBottom: "12px",
+                      flexWrap: "wrap",
+                    }}>
+                      {relayState.members.map((member) => (
+                        <div
+                          key={member.id}
+                          style={{
+                            padding: "6px 12px",
+                            borderRadius: "20px",
+                            fontSize: "12px",
+                            fontWeight: 500,
+                            background: member.id === relayState.currentMember?.id
+                              ? "var(--accent-primary)"
+                              : "var(--card-bg)",
+                            border: `1px solid ${member.id === relayState.currentMember?.id ? "var(--accent-primary)" : "var(--border-color)"}`,
+                            color: member.id === relayState.currentMember?.id ? "#000" : "var(--text-secondary)",
+                          }}
+                        >
+                          {member.id === relayState.currentMember?.id && "✏️ "}
+                          {member.name}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  
                   <div className="code-editor-header">
-                    <span style={{ fontWeight: 600, fontSize: "14px" }}>Code Editor</span>
+                    <span style={{ fontWeight: 600, fontSize: "14px" }}>
+                      Code Editor
+                      {relayState.relayActive && !relayState.isActiveEditor && (
+                        <span style={{ marginLeft: "8px", color: "#ffa500", fontSize: "12px" }}>
+                          (View Only - Wait for your turn)
+                        </span>
+                      )}
+                    </span>
                     <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
                       <select
                         className="language-select"
@@ -602,6 +852,7 @@ export default function TeamPage() {
                             [currentProblem.id]: e.target.value,
                           }))
                         }
+                        disabled={relayState.relayActive && !relayState.isActiveEditor}
                       >
                         <option value="python">Python</option>
                         <option value="cpp">C++</option>
@@ -622,7 +873,10 @@ export default function TeamPage() {
                     </div>
                   </div>
                   
-                  <div className="code-editor">
+                  <div className="code-editor" style={{
+                    position: "relative",
+                    opacity: relayState.relayActive && !relayState.isActiveEditor ? 0.8 : 1,
+                  }}>
                     <textarea
                       value={codes[currentProblem.id] || ""}
                       onChange={(e) =>
@@ -633,7 +887,32 @@ export default function TeamPage() {
                       }
                       placeholder="Write your solution here..."
                       spellCheck={false}
+                      disabled={relayState.relayActive && !relayState.isActiveEditor}
+                      style={{
+                        cursor: relayState.relayActive && !relayState.isActiveEditor ? "not-allowed" : "text",
+                      }}
                     />
+                    {relayState.relayActive && !relayState.isActiveEditor && (
+                      <div style={{
+                        position: "absolute",
+                        top: "50%",
+                        left: "50%",
+                        transform: "translate(-50%, -50%)",
+                        background: "rgba(0,0,0,0.7)",
+                        padding: "16px 24px",
+                        borderRadius: "8px",
+                        textAlign: "center",
+                        pointerEvents: "none",
+                      }}>
+                        <div style={{ fontSize: "24px", marginBottom: "8px" }}>👀</div>
+                        <div style={{ color: "#ffa500", fontWeight: 600 }}>
+                          Viewing: {relayState.currentMember?.name}
+                        </div>
+                        <div style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "4px" }}>
+                          Wait for your turn to edit
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* Compiler Section */}
@@ -651,7 +930,7 @@ export default function TeamPage() {
                         <button
                           className="btn btn-small"
                           onClick={handleCompile}
-                          disabled={compiling}
+                          disabled={compiling || (relayState.relayActive && !relayState.isActiveEditor)}
                           style={{ background: "var(--accent-success)" }}
                         >
                           {compiling ? "Compiling..." : "▶ Run Code"}
@@ -659,7 +938,7 @@ export default function TeamPage() {
                         <button
                           className="btn btn-small"
                           onClick={handleRunTests}
-                          disabled={runningTests}
+                          disabled={runningTests || (relayState.relayActive && !relayState.isActiveEditor)}
                           style={{ background: "var(--accent-warning)" }}
                         >
                           {runningTests ? "Running..." : "🧪 Run Test Cases"}
@@ -865,7 +1144,7 @@ export default function TeamPage() {
                     <button
                       className="btn btn-success btn-small"
                       onClick={() => handleSubmit(currentProblem.id)}
-                      disabled={submitting[currentProblem.id] || !competitionActive}
+                      disabled={submitting[currentProblem.id] || !competitionActive || (relayState.relayActive && !relayState.isActiveEditor)}
                       style={{ width: "auto", minWidth: "140px" }}
                     >
                       {submitting[currentProblem.id] ? "Submitting..." : "Submit Solution"}

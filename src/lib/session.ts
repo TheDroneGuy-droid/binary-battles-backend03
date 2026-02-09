@@ -3,7 +3,8 @@ import crypto from "crypto";
 
 export interface SessionData {
   user?: {
-    name: string;
+    name: string; // Team name
+    memberId: string; // Individual member ID for relay
     isAdmin: boolean;
     isMasterAdmin: boolean; // Master admin with extra privileges
     sessionId: string; // Unique session ID for each login

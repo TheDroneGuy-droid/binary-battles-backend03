@@ -71,7 +71,8 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS competition (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     start_time INTEGER,
-    duration INTEGER DEFAULT 120
+    duration INTEGER DEFAULT 120,
+    relay_duration INTEGER DEFAULT 5
   );
 
   CREATE TABLE IF NOT EXISTS violations (
@@ -89,6 +90,30 @@ db.exec(`
     activity_type TEXT NOT NULL,
     details TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (team_name) REFERENCES teams(name)
+  );
+
+  CREATE TABLE IF NOT EXISTS team_members (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    team_name TEXT NOT NULL,
+    member_id TEXT NOT NULL,
+    member_name TEXT,
+    member_index INTEGER NOT NULL,
+    FOREIGN KEY (team_name) REFERENCES teams(name),
+    UNIQUE(team_name, member_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS relay_state (
+    team_name TEXT PRIMARY KEY,
+    current_member_id TEXT NOT NULL,
+    current_member_index INTEGER NOT NULL,
+    relay_start_time INTEGER NOT NULL,
+    relay_end_time INTEGER NOT NULL,
+    relay_number INTEGER DEFAULT 1,
+    previous_member_id TEXT,
+    shared_code TEXT DEFAULT '',
+    shared_language TEXT DEFAULT 'python',
+    relay_history TEXT DEFAULT '[]',
     FOREIGN KEY (team_name) REFERENCES teams(name)
   );
 `);
@@ -114,9 +139,16 @@ try {
   db.exec("ALTER TABLE teams ADD COLUMN selected_problem INTEGER DEFAULT NULL");
 }
 
+// Migration: Add relay_duration column if it doesn't exist
+try {
+  db.prepare("SELECT relay_duration FROM competition LIMIT 1").get();
+} catch {
+  db.exec("ALTER TABLE competition ADD COLUMN relay_duration INTEGER DEFAULT 5");
+}
+
 // Initialize competition row if not exists
 const initCompetition = db.prepare(
-  "INSERT OR IGNORE INTO competition (id, duration) VALUES (1, 120)"
+  "INSERT OR IGNORE INTO competition (id, duration, relay_duration) VALUES (1, 120, 5)"
 );
 initCompetition.run();
 
@@ -785,6 +817,284 @@ export function getCompetitionStats(): CompetitionStats {
     totalViolations,
     problemStats,
   };
+}
+
+// ============ Relay Race System ============
+
+export interface TeamMember {
+  id: string;
+  name: string;
+  index: number;
+}
+
+export interface RelayState {
+  teamName: string;
+  currentMemberId: string;
+  currentMemberIndex: number;
+  relayStartTime: number;
+  relayEndTime: number;
+  relayNumber: number;
+  previousMemberId: string | null;
+  sharedCode: string;
+  sharedLanguage: string;
+  relayHistory: string[];
+  members: TeamMember[];
+}
+
+// Get relay duration from competition settings (in minutes)
+export function getRelayDuration(): number {
+  const comp = db.prepare("SELECT relay_duration FROM competition WHERE id = 1").get() as { relay_duration: number } | undefined;
+  return comp?.relay_duration || 5;
+}
+
+// Set relay duration (admin only)
+export function setRelayDuration(minutes: number): void {
+  db.prepare("UPDATE competition SET relay_duration = ? WHERE id = 1").run(minutes);
+}
+
+// Add team members when creating/updating a team
+export function setTeamMembers(teamName: string, memberIds: string[]): boolean {
+  try {
+    // Clear existing members
+    db.prepare("DELETE FROM team_members WHERE team_name = ?").run(teamName);
+    
+    // Add new members (2-4 members)
+    const insert = db.prepare(
+      "INSERT INTO team_members (team_name, member_id, member_name, member_index) VALUES (?, ?, ?, ?)"
+    );
+    
+    for (let i = 0; i < memberIds.length; i++) {
+      insert.run(teamName, memberIds[i].trim().toLowerCase(), memberIds[i].trim(), i);
+    }
+    
+    // Update team size
+    db.prepare("UPDATE teams SET team_size = ? WHERE name = ?").run(memberIds.length, teamName);
+    
+    return true;
+  } catch (error) {
+    console.error("Error setting team members:", error);
+    return false;
+  }
+}
+
+// Get team members
+export function getTeamMembers(teamName: string): TeamMember[] {
+  const members = db.prepare(
+    "SELECT member_id, member_name, member_index FROM team_members WHERE team_name = ? ORDER BY member_index"
+  ).all(teamName) as { member_id: string; member_name: string; member_index: number }[];
+  
+  return members.map(m => ({
+    id: m.member_id,
+    name: m.member_name || m.member_id,
+    index: m.member_index,
+  }));
+}
+
+// Get which team a member belongs to
+export function getMemberTeam(memberId: string): string | null {
+  const normalizedId = memberId.trim().toLowerCase();
+  const result = db.prepare(
+    "SELECT team_name FROM team_members WHERE LOWER(member_id) = ?"
+  ).get(normalizedId) as { team_name: string } | undefined;
+  return result?.team_name || null;
+}
+
+// Validate member login and get their team
+export function validateMemberLogin(memberId: string): { valid: boolean; teamName: string; memberIndex: number } {
+  const normalizedId = memberId.trim().toLowerCase();
+  const result = db.prepare(
+    "SELECT team_name, member_index FROM team_members WHERE LOWER(member_id) = ?"
+  ).get(normalizedId) as { team_name: string; member_index: number } | undefined;
+  
+  if (!result) {
+    return { valid: false, teamName: "", memberIndex: -1 };
+  }
+  
+  return { valid: true, teamName: result.team_name, memberIndex: result.member_index };
+}
+
+// Initialize relay state for a team when competition starts
+export function initializeRelayState(teamName: string): RelayState | null {
+  const members = getTeamMembers(teamName);
+  if (members.length < 2) return null;
+  
+  const relayDuration = getRelayDuration();
+  const now = Date.now();
+  const endTime = now + relayDuration * 60 * 1000;
+  
+  // Start with a random member
+  const randomIndex = Math.floor(Math.random() * members.length);
+  const firstMember = members[randomIndex];
+  
+  try {
+    db.prepare(`
+      INSERT OR REPLACE INTO relay_state 
+      (team_name, current_member_id, current_member_index, relay_start_time, relay_end_time, relay_number, previous_member_id, shared_code, shared_language, relay_history)
+      VALUES (?, ?, ?, ?, ?, 1, NULL, '', 'python', ?)
+    `).run(teamName, firstMember.id, firstMember.index, now, endTime, JSON.stringify([firstMember.id]));
+    
+    return getRelayState(teamName);
+  } catch (error) {
+    console.error("Error initializing relay state:", error);
+    return null;
+  }
+}
+
+// Get current relay state for a team
+export function getRelayState(teamName: string): RelayState | null {
+  const state = db.prepare(
+    "SELECT * FROM relay_state WHERE team_name = ?"
+  ).get(teamName) as {
+    team_name: string;
+    current_member_id: string;
+    current_member_index: number;
+    relay_start_time: number;
+    relay_end_time: number;
+    relay_number: number;
+    previous_member_id: string | null;
+    shared_code: string;
+    shared_language: string;
+    relay_history: string;
+  } | undefined;
+  
+  if (!state) return null;
+  
+  const members = getTeamMembers(teamName);
+  
+  return {
+    teamName: state.team_name,
+    currentMemberId: state.current_member_id,
+    currentMemberIndex: state.current_member_index,
+    relayStartTime: state.relay_start_time,
+    relayEndTime: state.relay_end_time,
+    relayNumber: state.relay_number,
+    previousMemberId: state.previous_member_id,
+    sharedCode: state.shared_code,
+    sharedLanguage: state.shared_language,
+    relayHistory: JSON.parse(state.relay_history || "[]"),
+    members,
+  };
+}
+
+// Check if relay needs to transition to next member
+export function checkAndTransitionRelay(teamName: string): RelayState | null {
+  const state = getRelayState(teamName);
+  if (!state) return null;
+  
+  const now = Date.now();
+  
+  // If relay time hasn't expired, return current state
+  if (now < state.relayEndTime) {
+    return state;
+  }
+  
+  // Time to transition to next member
+  return transitionToNextMember(teamName);
+}
+
+// Transition to next member (called when timer expires)
+export function transitionToNextMember(teamName: string): RelayState | null {
+  const state = getRelayState(teamName);
+  if (!state || state.members.length < 2) return null;
+  
+  const relayDuration = getRelayDuration();
+  const now = Date.now();
+  const endTime = now + relayDuration * 60 * 1000;
+  
+  // Get list of eligible members (exclude current member to prevent consecutive turns)
+  const eligibleMembers = state.members.filter(m => m.id !== state.currentMemberId);
+  
+  if (eligibleMembers.length === 0) {
+    // Fallback: allow any member if somehow there's only one
+    return state;
+  }
+  
+  // Select random member from eligible ones
+  const randomIndex = Math.floor(Math.random() * eligibleMembers.length);
+  const nextMember = eligibleMembers[randomIndex];
+  
+  // Update relay history
+  const history = [...state.relayHistory, nextMember.id];
+  
+  try {
+    db.prepare(`
+      UPDATE relay_state SET
+        current_member_id = ?,
+        current_member_index = ?,
+        relay_start_time = ?,
+        relay_end_time = ?,
+        relay_number = relay_number + 1,
+        previous_member_id = ?,
+        relay_history = ?
+      WHERE team_name = ?
+    `).run(nextMember.id, nextMember.index, now, endTime, state.currentMemberId, JSON.stringify(history), teamName);
+    
+    // Log the transition
+    logActivity(teamName, "RELAY_TRANSITION", `Relay ${state.relayNumber + 1}: ${nextMember.name} is now coding`);
+    
+    return getRelayState(teamName);
+  } catch (error) {
+    console.error("Error transitioning relay:", error);
+    return null;
+  }
+}
+
+// Update shared code (only by active member)
+export function updateSharedCode(teamName: string, memberId: string, code: string, language: string): boolean {
+  const state = getRelayState(teamName);
+  if (!state) return false;
+  
+  // Verify this member is the active one
+  const normalizedMemberId = memberId.trim().toLowerCase();
+  if (state.currentMemberId.toLowerCase() !== normalizedMemberId) {
+    return false; // Not the active member
+  }
+  
+  try {
+    db.prepare(
+      "UPDATE relay_state SET shared_code = ?, shared_language = ? WHERE team_name = ?"
+    ).run(code, language, teamName);
+    return true;
+  } catch (error) {
+    console.error("Error updating shared code:", error);
+    return false;
+  }
+}
+
+// Check if a member is currently the active relay member
+export function isActiveMember(teamName: string, memberId: string): boolean {
+  const state = getRelayState(teamName);
+  if (!state) return false;
+  
+  const normalizedMemberId = memberId.trim().toLowerCase();
+  return state.currentMemberId.toLowerCase() === normalizedMemberId;
+}
+
+// Clear relay state (when competition ends or is reset)
+export function clearRelayState(teamName?: string): void {
+  if (teamName) {
+    db.prepare("DELETE FROM relay_state WHERE team_name = ?").run(teamName);
+  } else {
+    db.prepare("DELETE FROM relay_state").run();
+  }
+}
+
+// Initialize relay for all teams when competition starts
+export function initializeAllRelays(): number {
+  const teams = db.prepare(
+    "SELECT name FROM teams WHERE is_admin = 0 AND is_banned = 0"
+  ).all() as { name: string }[];
+  
+  let initialized = 0;
+  for (const team of teams) {
+    const members = getTeamMembers(team.name);
+    if (members.length >= 2) {
+      const state = initializeRelayState(team.name);
+      if (state) initialized++;
+    }
+  }
+  
+  return initialized;
 }
 
 export default db;

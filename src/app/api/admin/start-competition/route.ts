@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getIronSession } from "iron-session";
 import { sessionOptions, SessionData } from "@/lib/session";
-import { startCompetition } from "@/lib/database";
+import { startCompetition, initializeAllRelays, setRelayDuration } from "@/lib/database";
 import { cookies } from "next/headers";
 
 // Disable caching
@@ -21,11 +21,26 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
     const duration = parseInt(body.duration) || 120;
+    const relayDuration = parseInt(body.relayDuration) || 5; // Default 5 minutes per relay
     
-    console.log("Starting competition with duration:", duration);
+    console.log("Starting competition with duration:", duration, "relay duration:", relayDuration);
+    
+    // Set relay duration
+    setRelayDuration(relayDuration);
+    
+    // Start the competition
     startCompetition(duration);
+    
+    // Initialize relay states for all teams
+    const relaysInitialized = initializeAllRelays();
+    console.log("Relays initialized for", relaysInitialized, "teams");
 
-    return NextResponse.json({ success: true, duration });
+    return NextResponse.json({ 
+      success: true, 
+      duration, 
+      relayDuration,
+      relaysInitialized,
+    });
   } catch (error) {
     console.error("Start competition error:", error);
     return NextResponse.json(
