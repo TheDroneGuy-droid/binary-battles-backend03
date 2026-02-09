@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getIronSession } from "iron-session";
 import { sessionOptions, SessionData } from "@/lib/session";
-import { addTeam, getTeam } from "@/lib/database";
+import { addTeam, getTeam, setTeamMembers } from "@/lib/database";
 import { cookies } from "next/headers";
 
 // Disable caching
@@ -12,6 +12,11 @@ interface TeamRow {
   registration_number: string;
   phone_number: string;
   team_name?: string;
+}
+
+interface GroupedTeam {
+  teamName: string;
+  members: { registrationNumber: string; phoneNumber: string }[];
 }
 
 export async function POST(request: NextRequest) {
@@ -34,31 +39,50 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const results: { success: boolean; teamName: string; password: string; error?: string }[] = [];
+    // Group rows by team_name to support relay race (multiple members per team)
+    const groupedTeams: Map<string, GroupedTeam> = new Map();
 
-    for (const team of teams) {
-      const registrationNumber = String(team.registration_number).trim();
-      const phoneNumber = String(team.phone_number).trim();
-      const teamName = team.team_name?.trim() || registrationNumber;
+    for (const row of teams) {
+      const registrationNumber = String(row.registration_number).trim();
+      const phoneNumber = String(row.phone_number).trim();
+      const teamName = row.team_name?.trim() || registrationNumber;
 
       if (!registrationNumber || !phoneNumber) {
+        continue; // Skip invalid rows
+      }
+
+      if (!groupedTeams.has(teamName)) {
+        groupedTeams.set(teamName, { teamName, members: [] });
+      }
+      groupedTeams.get(teamName)!.members.push({ registrationNumber, phoneNumber });
+    }
+
+    const results: { success: boolean; teamName: string; password: string; memberCount: number; error?: string }[] = [];
+
+    for (const [teamName, group] of groupedTeams) {
+      const members = group.members;
+
+      // Validate member count (2-4 for relay)
+      if (members.length < 2 || members.length > 4) {
         results.push({
           success: false,
-          teamName: registrationNumber || "Unknown",
+          teamName,
           password: "",
-          error: "Missing registration number or phone number",
+          memberCount: members.length,
+          error: `Team must have 2-4 members, got ${members.length}`,
         });
         continue;
       }
 
-      // Password is last 4 digits of phone number
-      const password = phoneNumber.slice(-4);
+      // Password is last 4 digits of first member's phone number
+      const password = members[0].phoneNumber.slice(-4);
 
       if (password.length < 4) {
         results.push({
           success: false,
           teamName,
           password: "",
+          memberCount: members.length,
           error: "Phone number must have at least 4 digits",
         });
         continue;
@@ -71,19 +95,38 @@ export async function POST(request: NextRequest) {
           success: false,
           teamName,
           password,
+          memberCount: members.length,
           error: "Team already exists",
         });
         continue;
       }
 
-      // Add team with registration number as ID
-      const success = addTeam(teamName, password, 1, registrationNumber);
+      // Registration numbers joined for the team
+      const registrationNumbers = members.map(m => m.registrationNumber).join(",");
+
+      // Add team
+      const teamAdded = addTeam(teamName, password, members.length, registrationNumbers);
+
+      if (!teamAdded) {
+        results.push({
+          success: false,
+          teamName,
+          password,
+          memberCount: members.length,
+          error: "Failed to add team",
+        });
+        continue;
+      }
+
+      // Set team members for relay
+      const memberIds = members.map(m => m.registrationNumber);
+      setTeamMembers(teamName, memberIds);
 
       results.push({
-        success,
+        success: true,
         teamName,
         password,
-        error: success ? undefined : "Failed to add team",
+        memberCount: members.length,
       });
     }
 
