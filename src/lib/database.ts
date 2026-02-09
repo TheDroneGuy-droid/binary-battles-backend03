@@ -146,6 +146,13 @@ try {
   db.exec("ALTER TABLE competition ADD COLUMN relay_duration INTEGER DEFAULT 5");
 }
 
+// Migration: Add active_question column to relay_state if it doesn't exist
+try {
+  db.prepare("SELECT active_question FROM relay_state LIMIT 1").get();
+} catch {
+  db.exec("ALTER TABLE relay_state ADD COLUMN active_question INTEGER DEFAULT NULL");
+}
+
 // Initialize competition row if not exists
 const initCompetition = db.prepare(
   "INSERT OR IGNORE INTO competition (id, duration, relay_duration) VALUES (1, 120, 5)"
@@ -837,6 +844,7 @@ export interface RelayState {
   previousMemberId: string | null;
   sharedCode: string;
   sharedLanguage: string;
+  activeQuestion: number | null;
   relayHistory: string[];
   members: TeamMember[];
 }
@@ -954,6 +962,7 @@ export function getRelayState(teamName: string): RelayState | null {
     previous_member_id: string | null;
     shared_code: string;
     shared_language: string;
+    active_question: number | null;
     relay_history: string;
   } | undefined;
   
@@ -971,6 +980,7 @@ export function getRelayState(teamName: string): RelayState | null {
     previousMemberId: state.previous_member_id,
     sharedCode: state.shared_code,
     sharedLanguage: state.shared_language,
+    activeQuestion: state.active_question,
     relayHistory: JSON.parse(state.relay_history || "[]"),
     members,
   };
@@ -1039,8 +1049,8 @@ export function transitionToNextMember(teamName: string): RelayState | null {
   }
 }
 
-// Update shared code (only by active member)
-export function updateSharedCode(teamName: string, memberId: string, code: string, language: string): boolean {
+// Update shared code and active question (only by active member)
+export function updateSharedCode(teamName: string, memberId: string, code: string, language: string, activeQuestion?: number | null): boolean {
   const state = getRelayState(teamName);
   if (!state) return false;
   
@@ -1051,9 +1061,15 @@ export function updateSharedCode(teamName: string, memberId: string, code: strin
   }
   
   try {
-    db.prepare(
-      "UPDATE relay_state SET shared_code = ?, shared_language = ? WHERE team_name = ?"
-    ).run(code, language, teamName);
+    if (activeQuestion !== undefined) {
+      db.prepare(
+        "UPDATE relay_state SET shared_code = ?, shared_language = ?, active_question = ? WHERE team_name = ?"
+      ).run(code, language, activeQuestion, teamName);
+    } else {
+      db.prepare(
+        "UPDATE relay_state SET shared_code = ?, shared_language = ? WHERE team_name = ?"
+      ).run(code, language, teamName);
+    }
     return true;
   } catch (error) {
     console.error("Error updating shared code:", error);

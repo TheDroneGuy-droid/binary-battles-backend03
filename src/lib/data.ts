@@ -117,7 +117,7 @@ export interface Problem {
 export const problems: Problem[] = [
   {
     id: 1,
-    title: "Array Chain Sum",
+    title: "q1",
     description: `In a Code Relay race, your team must pass numbers through a chain. Given an array of N integers and a target sum K, find if there exists a contiguous subarray whose sum equals K.
 
 The relay works as follows:
@@ -206,7 +206,7 @@ solve()`,
   },
   {
     id: 2,
-    title: "Relay Pattern Match",
+    title: "q2",
     description: `In the relay, messages get transformed as they pass through team members. Given a pattern string P and a text string T, find all starting positions where the pattern occurs in the text.
 
 The pattern uses special characters:
@@ -301,7 +301,7 @@ solve()`,
   },
   {
     id: 3,
-    title: "Binary Relay Encoding",
+    title: "q3",
     description: `Each relay station encodes the message in binary before passing it on. Given a sequence of N operations, where each operation is either:
 - ENCODE X: Convert number X to binary and add to the message
 - DECODE: Remove and output the last encoded number
@@ -391,7 +391,7 @@ solve()`,
   },
   {
     id: 4,
-    title: "Relay Graph Traversal",
+    title: "q4",
     description: `The relay course is represented as a directed graph where each node is a checkpoint. Your team must find the shortest path from the START checkpoint to the FINISH checkpoint, passing through at least one mandatory checkpoint.
 
 Given:

@@ -92,6 +92,7 @@ interface RelayState {
   relayEndTime: number;
   sharedCode: string;
   sharedLanguage: string;
+  activeQuestion: number | null;
   members: RelayMember[];
 }
 
@@ -143,6 +144,7 @@ export default function TeamPage() {
     relayEndTime: 0,
     sharedCode: "",
     sharedLanguage: "python",
+    activeQuestion: null,
     members: [],
   });
   const [relayTimer, setRelayTimer] = useState("--:--");
@@ -155,6 +157,8 @@ export default function TeamPage() {
   const maxRetries = 3;
   const lastCodeSyncRef = useRef("");
   const codeSyncIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const prevRelayNumberRef = useRef(0);
+  const wasActiveEditorRef = useRef(false);
 
   // Fetch relay state
   const fetchRelayState = useCallback(async () => {
@@ -166,6 +170,18 @@ export default function TeamPage() {
       const data = await res.json();
       
       if (data.success) {
+        const newActiveQuestion = data.activeQuestion ?? null;
+        
+        // Detect if relay just transitioned to this user becoming active
+        const justBecameActive = data.relayActive && 
+          data.isActiveEditor && 
+          !wasActiveEditorRef.current && 
+          data.relayNumber > prevRelayNumberRef.current;
+        
+        // Update refs for next comparison
+        prevRelayNumberRef.current = data.relayNumber || 0;
+        wasActiveEditorRef.current = data.isActiveEditor || false;
+        
         setRelayState({
           relayActive: data.relayActive || false,
           isActiveEditor: data.isActiveEditor || false,
@@ -176,21 +192,42 @@ export default function TeamPage() {
           relayEndTime: data.relayEndTime || 0,
           sharedCode: data.sharedCode || "",
           sharedLanguage: data.sharedLanguage || "python",
+          activeQuestion: newActiveQuestion,
           members: data.members || [],
         });
         
-        // If not active editor, sync code from server
-        if (data.relayActive && !data.isActiveEditor && selectedProblem) {
+        // Auto-navigate to active question when becoming active editor
+        if (justBecameActive && newActiveQuestion !== null) {
+          setSelectedProblem(newActiveQuestion);
+          // Sync the code for the active question
+          if (data.sharedCode !== undefined) {
+            lastCodeSyncRef.current = data.sharedCode;
+            setCodes(prev => ({
+              ...prev,
+              [newActiveQuestion]: data.sharedCode || "",
+            }));
+            setLanguages(prev => ({
+              ...prev,
+              [newActiveQuestion]: data.sharedLanguage || "python",
+            }));
+          }
+        }
+        // If not active editor, sync code from server for current question
+        else if (data.relayActive && !data.isActiveEditor && newActiveQuestion !== null) {
+          // Auto-navigate to the active question being worked on
+          if (selectedProblem !== newActiveQuestion) {
+            setSelectedProblem(newActiveQuestion);
+          }
           // Only update if code is different (prevent cursor reset)
           if (data.sharedCode !== lastCodeSyncRef.current) {
             lastCodeSyncRef.current = data.sharedCode;
             setCodes(prev => ({
               ...prev,
-              [selectedProblem]: data.sharedCode || "",
+              [newActiveQuestion]: data.sharedCode || "",
             }));
             setLanguages(prev => ({
               ...prev,
-              [selectedProblem]: data.sharedLanguage || "python",
+              [newActiveQuestion]: data.sharedLanguage || "python",
             }));
           }
         }
@@ -201,14 +238,14 @@ export default function TeamPage() {
   }, [selectedProblem]);
 
   // Sync code to server when active editor types
-  const syncCodeToServer = useCallback(async (code: string, language: string) => {
+  const syncCodeToServer = useCallback(async (code: string, language: string, activeQuestion: number | null) => {
     if (!relayState.isActiveEditor) return;
     
     try {
       await fetch("/api/relay", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code, language }),
+        body: JSON.stringify({ code, language, activeQuestion }),
         credentials: "include",
       });
     } catch (error) {
@@ -392,7 +429,7 @@ export default function TeamPage() {
     codeSyncIntervalRef.current = setInterval(() => {
       const currentCode = codes[selectedProblem] || "";
       const currentLanguage = languages[selectedProblem] || "python";
-      syncCodeToServer(currentCode, currentLanguage);
+      syncCodeToServer(currentCode, currentLanguage, selectedProblem);
     }, 2000);
     
     return () => {
@@ -715,7 +752,114 @@ export default function TeamPage() {
           </div>
 
           {/* Main - Problem Detail & Editor */}
-          <div className="problem-detail">
+          <div className="problem-detail" style={{ position: "relative" }}>
+            {/* Blur overlay for non-active relay members */}
+            {relayState.relayActive && !relayState.isActiveEditor && (
+              <div 
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  backdropFilter: "blur(20px)",
+                  WebkitBackdropFilter: "blur(20px)",
+                  background: "rgba(0, 0, 0, 0.7)",
+                  zIndex: 100,
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  borderRadius: "12px",
+                  padding: "40px",
+                }}
+              >
+                <div style={{
+                  background: "linear-gradient(135deg, rgba(255, 165, 0, 0.3), rgba(200, 100, 0, 0.3))",
+                  border: "2px solid #ffa500",
+                  borderRadius: "16px",
+                  padding: "40px 60px",
+                  textAlign: "center",
+                  maxWidth: "500px",
+                }}>
+                  <div style={{ fontSize: "64px", marginBottom: "16px" }}>⏳</div>
+                  <h2 style={{ 
+                    color: "#ffa500", 
+                    marginBottom: "16px",
+                    fontSize: "28px",
+                  }}>
+                    Waiting for Your Turn
+                  </h2>
+                  <p style={{ 
+                    color: "var(--text-muted)", 
+                    marginBottom: "24px",
+                    fontSize: "16px",
+                    lineHeight: 1.6,
+                  }}>
+                    <strong style={{ color: "#00c853" }}>{relayState.currentMember?.name || "A teammate"}</strong> is currently coding.
+                    <br />
+                    You&apos;ll be able to see and edit once it&apos;s your turn.
+                  </p>
+                  
+                  <div style={{
+                    background: "rgba(0, 0, 0, 0.3)",
+                    padding: "20px",
+                    borderRadius: "12px",
+                    marginBottom: "20px",
+                  }}>
+                    <div style={{ fontSize: "12px", color: "var(--text-muted)", marginBottom: "4px" }}>
+                      TIME REMAINING
+                    </div>
+                    <div style={{ 
+                      fontFamily: "monospace", 
+                      fontSize: "48px", 
+                      fontWeight: 700,
+                      color: parseInt(relayTimer.split(":")[0]) === 0 && parseInt(relayTimer.split(":")[1]) <= 30 
+                        ? "#ff4444" 
+                        : "#ffa500",
+                    }}>
+                      {relayTimer}
+                    </div>
+                  </div>
+                  
+                  <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>
+                    RELAY #{relayState.relayNumber}
+                    {" • "}
+                    {relayState.members.length} team members
+                  </div>
+                  
+                  {/* Member Pills */}
+                  <div style={{
+                    display: "flex",
+                    gap: "8px",
+                    justifyContent: "center",
+                    flexWrap: "wrap",
+                    marginTop: "16px",
+                  }}>
+                    {relayState.members.map((member) => (
+                      <span 
+                        key={member.id}
+                        style={{
+                          padding: "6px 14px",
+                          borderRadius: "16px",
+                          fontSize: "12px",
+                          fontWeight: 600,
+                          background: member.id === relayState.currentMember?.id 
+                            ? "#00c853" 
+                            : "rgba(255, 255, 255, 0.1)",
+                          color: member.id === relayState.currentMember?.id 
+                            ? "#000" 
+                            : "var(--text-muted)",
+                        }}
+                      >
+                        {member.id === relayState.currentMember?.id ? "🖊️ " : ""}{member.name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+            
             {currentProblem && (
               <>
                 <div className="problem-description">
@@ -755,15 +899,13 @@ export default function TeamPage() {
                 </div>
 
                 <div className="code-editor-container">
-                  {/* Relay Status Banner */}
-                  {relayState.relayActive && (
+                  {/* Relay Status Banner - Only shown for active editor */}
+                  {relayState.relayActive && relayState.isActiveEditor && (
                     <div 
                       className="relay-status-banner"
                       style={{
-                        background: relayState.isActiveEditor 
-                          ? "linear-gradient(135deg, rgba(0, 200, 83, 0.2), rgba(0, 150, 60, 0.2))"
-                          : "linear-gradient(135deg, rgba(255, 165, 0, 0.2), rgba(200, 100, 0, 0.2))",
-                        border: `2px solid ${relayState.isActiveEditor ? "#00c853" : "#ffa500"}`,
+                        background: "linear-gradient(135deg, rgba(0, 200, 83, 0.2), rgba(0, 150, 60, 0.2))",
+                        border: "2px solid #00c853",
                         borderRadius: "8px",
                         padding: "12px 16px",
                         marginBottom: "12px",
@@ -776,13 +918,7 @@ export default function TeamPage() {
                         <div>
                           <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>RELAY #{relayState.relayNumber}</span>
                           <div style={{ fontWeight: 600, fontSize: "16px" }}>
-                            {relayState.isActiveEditor ? (
-                              <span style={{ color: "#00c853" }}>✏️ YOUR TURN - You can edit!</span>
-                            ) : (
-                              <span style={{ color: "#ffa500" }}>
-                                👀 {relayState.currentMember?.name || "Teammate"} is coding
-                              </span>
-                            )}
+                            <span style={{ color: "#00c853" }}>✏️ YOUR TURN - You can edit!</span>
                           </div>
                         </div>
                       </div>
@@ -803,8 +939,8 @@ export default function TeamPage() {
                     </div>
                   )}
                   
-                  {/* Team Members List */}
-                  {relayState.relayActive && relayState.members.length > 0 && (
+                  {/* Team Members List - Only shown for active editor */}
+                  {relayState.relayActive && relayState.isActiveEditor && relayState.members.length > 0 && (
                     <div style={{
                       display: "flex",
                       gap: "8px",

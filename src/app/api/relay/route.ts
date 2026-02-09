@@ -78,6 +78,7 @@ export async function GET() {
       relayEndTime: state.relayEndTime,
       sharedCode: state.sharedCode,
       sharedLanguage: state.sharedLanguage,
+      activeQuestion: state.activeQuestion,
       members: state.members,
       relayHistory: state.relayHistory,
     });
@@ -109,7 +110,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { code, language } = await request.json();
+    const { code, language, activeQuestion } = await request.json();
     const teamName = session.user.name;
     const memberId = session.user.memberId || "";
 
@@ -124,8 +125,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Update the shared code
-    const updated = updateSharedCode(teamName, memberId, code, language);
+    // Update the shared code and active question
+    const updated = updateSharedCode(teamName, memberId, code, language, activeQuestion);
 
     if (!updated) {
       return NextResponse.json(
