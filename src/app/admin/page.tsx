@@ -73,6 +73,13 @@ interface DbSchema {
   schema: Record<string, string[]>;
 }
 
+interface ProblemSolution {
+  id: number;
+  title: string;
+  solution: string;
+  solutionLanguage: string;
+}
+
 export default function AdminPage() {
   const router = useRouter();
   const [teams, setTeams] = useState<Teams>({});
@@ -84,6 +91,7 @@ export default function AdminPage() {
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [violations, setViolations] = useState<Violation[]>([]);
   const [stats, setStats] = useState<CompetitionStats | null>(null);
+  const [problemSolutions, setProblemSolutions] = useState<ProblemSolution[]>([]);
   const [timer, setTimer] = useState("Not Started");
   const [newTeamName, setNewTeamName] = useState("");
   const [newTeamPassword, setNewTeamPassword] = useState("");
@@ -92,6 +100,9 @@ export default function AdminPage() {
   const [vantaLoaded, setVantaLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [expandedSubmissions, setExpandedSubmissions] = useState<Set<number>>(
+    new Set()
+  );
+  const [expandedSolutions, setExpandedSolutions] = useState<Set<number>>(
     new Set()
   );
   const [threeLoaded, setThreeLoaded] = useState(false);
@@ -157,6 +168,7 @@ export default function AdminPage() {
       setViolations(data.violations || []);
       setStats(data.stats || null);
       setIsMasterAdmin(data.isMasterAdmin || false);
+      setProblemSolutions(data.problemSolutions || []);
       
       // Fetch master admin specific data
       if (data.isMasterAdmin && isFirstLoad.current) {
@@ -442,6 +454,18 @@ export default function AdminPage() {
 
   const toggleSubmissionCode = (index: number) => {
     setExpandedSubmissions((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(index)) {
+        newSet.delete(index);
+      } else {
+        newSet.add(index);
+      }
+      return newSet;
+    });
+  };
+
+  const toggleSolutionCode = (index: number) => {
+    setExpandedSolutions((prev) => {
       const newSet = new Set(prev);
       if (newSet.has(index)) {
         newSet.delete(index);
@@ -1056,10 +1080,11 @@ export default function AdminPage() {
           <div className="submissions-list">
             {[...submissions].reverse().map((sub, idx) => {
               const realIndex = submissions.length - 1 - idx;
+              const problemSolution = problemSolutions.find(p => p.id === sub.problemId);
               return (
                 <div key={realIndex} className="submission-item">
                   <h4>
-                    Team: {sub.team} | Problem {sub.problemId} | {sub.language}
+                    Team: {sub.team} | Problem {sub.problemId}: {problemSolution?.title || "Unknown"} | {sub.language}
                   </h4>
                   <p>
                     <strong>Time:</strong>{" "}
@@ -1077,24 +1102,70 @@ export default function AdminPage() {
                         : `✗ ${sub.result.message}`}
                     </span>
                   </p>
-                  <button
-                    onClick={() => toggleSubmissionCode(realIndex)}
-                    style={{
-                      cursor: "pointer",
-                      color: "#ff6347",
-                      margin: "15px 0",
-                      fontWeight: 600,
-                      background: "none",
-                      border: "none",
-                      fontSize: "1em",
-                    }}
-                  >
-                    {expandedSubmissions.has(realIndex)
-                      ? "▼ Hide Code"
-                      : "▶ View Code"}
-                  </button>
+                  <div style={{ display: "flex", gap: "10px", marginTop: "10px" }}>
+                    <button
+                      onClick={() => toggleSubmissionCode(realIndex)}
+                      style={{
+                        cursor: "pointer",
+                        color: "#ff6347",
+                        fontWeight: 600,
+                        background: "none",
+                        border: "none",
+                        fontSize: "1em",
+                      }}
+                    >
+                      {expandedSubmissions.has(realIndex)
+                        ? "▼ Hide Team Code"
+                        : "▶ View Team Code"}
+                    </button>
+                    {problemSolution && (
+                      <button
+                        onClick={() => toggleSolutionCode(realIndex)}
+                        style={{
+                          cursor: "pointer",
+                          color: "#00d9ff",
+                          fontWeight: 600,
+                          background: "none",
+                          border: "none",
+                          fontSize: "1em",
+                        }}
+                      >
+                        {expandedSolutions.has(realIndex)
+                          ? "▼ Hide Reference Answer"
+                          : "▶ View Reference Answer"}
+                      </button>
+                    )}
+                  </div>
                   {expandedSubmissions.has(realIndex) && (
-                    <div className="submission-code">{sub.code}</div>
+                    <div style={{ marginTop: "12px" }}>
+                      <div style={{ 
+                        fontWeight: 600, 
+                        marginBottom: "8px", 
+                        color: "#ff6347",
+                        fontSize: "13px"
+                      }}>
+                        📝 Team Submission ({sub.language})
+                      </div>
+                      <div className="submission-code">{sub.code}</div>
+                    </div>
+                  )}
+                  {expandedSolutions.has(realIndex) && problemSolution && (
+                    <div style={{ marginTop: "12px" }}>
+                      <div style={{ 
+                        fontWeight: 600, 
+                        marginBottom: "8px", 
+                        color: "#00d9ff",
+                        fontSize: "13px"
+                      }}>
+                        ✅ Reference Solution ({problemSolution.solutionLanguage})
+                      </div>
+                      <div className="submission-code" style={{ 
+                        borderColor: "#00d9ff33",
+                        background: "rgba(0, 217, 255, 0.05)"
+                      }}>
+                        {problemSolution.solution}
+                      </div>
+                    </div>
                   )}
                 </div>
               );

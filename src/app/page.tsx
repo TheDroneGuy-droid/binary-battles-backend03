@@ -13,6 +13,7 @@ export default function LoginPage() {
   const [checkingSession, setCheckingSession] = useState(true);
   const [vantaLoaded, setVantaLoaded] = useState(false);
   const [threeLoaded, setThreeLoaded] = useState(false);
+  const [isAdminMode, setIsAdminMode] = useState(false);
   const router = useRouter();
   const hasRedirected = useRef(false);
 
@@ -98,14 +99,19 @@ export default function LoginPage() {
     setLoading(true);
     setError("");
 
-    // Use username as-is (normalization only happens on team creation)
     const trimmedUsername = username.trim();
 
     try {
+      // For participants: login with registration number only (no password)
+      // For admins: login with username and password
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: trimmedUsername, password }),
+        body: JSON.stringify({ 
+          username: trimmedUsername, 
+          password: isAdminMode ? password : undefined,
+          registrationOnly: !isAdminMode 
+        }),
         credentials: "include",
         cache: "no-store",
       });
@@ -172,39 +178,80 @@ export default function LoginPage() {
             priority
           />
           <h1>Binary Battles 3.0</h1>
-          <p>Elite Coding Competition</p>
+          <p>Elite Coding Competition - Round 3: Code Relay</p>
         </div>
 
         <div className="login-container">
-          <h2>Login</h2>
+          <h2>{isAdminMode ? "Admin Login" : "Participant Login"}</h2>
 
           {error && <div className="error-message">{error}</div>}
 
           <form onSubmit={handleSubmit}>
             <div className="form-group">
-              <label>Registration Number</label>
+              <label>{isAdminMode ? "Admin Username" : "Registration Number"}</label>
               <input
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="Enter registration number"
+                placeholder={isAdminMode ? "Enter admin username" : "Enter your registration number"}
                 required
+                autoComplete="username"
               />
             </div>
-            <div className="form-group">
-              <label>Password</label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter password"
-                required
-              />
-            </div>
+            
+            {isAdminMode && (
+              <div className="form-group">
+                <label>Password</label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Enter password"
+                  required
+                  autoComplete="current-password"
+                />
+              </div>
+            )}
+            
             <button type="submit" className="btn" disabled={loading}>
               {loading ? "Logging in..." : "Login"}
             </button>
           </form>
+
+          <div style={{ marginTop: "20px", textAlign: "center" }}>
+            <button 
+              type="button"
+              className="btn-link"
+              onClick={() => {
+                setIsAdminMode(!isAdminMode);
+                setError("");
+                setPassword("");
+              }}
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "var(--accent-primary)",
+                cursor: "pointer",
+                fontSize: "14px",
+                textDecoration: "underline",
+              }}
+            >
+              {isAdminMode ? "Switch to Participant Login" : "Admin Login"}
+            </button>
+          </div>
+
+          {!isAdminMode && (
+            <div style={{ 
+              marginTop: "16px", 
+              padding: "12px", 
+              background: "rgba(0, 217, 255, 0.1)", 
+              borderRadius: "8px",
+              fontSize: "13px",
+              color: "var(--text-muted)"
+            }}>
+              <strong>Participants:</strong> Enter your registration number only. No password required.
+            </div>
+          )}
         </div>
       </div>
       <div className="dev-footer">developed by students of VIT</div>

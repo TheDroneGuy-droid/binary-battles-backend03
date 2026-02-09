@@ -3,7 +3,12 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import Image from "next/image";
+
+interface TestCase {
+  input: string;
+  expectedOutput: string;
+  isHidden: boolean;
+}
 
 interface Problem {
   id: number;
@@ -11,12 +16,16 @@ interface Problem {
   description: string;
   input: string;
   output: string;
-  examples: { input: string; output: string }[];
+  constraints?: string;
+  examples: { input: string; output: string; explanation?: string }[];
+  testCases?: TestCase[];
+  difficulty?: string;
 }
 
 interface TeamData {
   score: number;
   solved: number[];
+  selectedProblem?: number;
 }
 
 interface LeaderboardEntry {
@@ -29,11 +38,31 @@ interface SubmissionResult {
   problemId: number;
   passed: boolean;
   message: string;
+  testsPassed?: number;
+  totalTests?: number;
+  score?: number;
 }
 
 interface CompetitionState {
   startTime: number | null;
   duration: number;
+}
+
+interface CompileResult {
+  success: boolean;
+  output?: string;
+  error?: string;
+  status?: string;
+  time?: string;
+  memory?: string;
+}
+
+interface TestCaseResult {
+  testCaseNumber: number;
+  passed: boolean;
+  isHidden: boolean;
+  earnedPoints: number;
+  error?: string;
 }
 
 export default function TeamPage() {
@@ -43,6 +72,7 @@ export default function TeamPage() {
   const [teamData, setTeamData] = useState<TeamData>({
     score: 0,
     solved: [],
+    selectedProblem: undefined,
   });
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [competition, setCompetition] = useState<CompetitionState>({
@@ -54,12 +84,19 @@ export default function TeamPage() {
   const [codes, setCodes] = useState<{ [key: number]: string }>({});
   const [languages, setLanguages] = useState<{ [key: number]: string }>({});
   const [submitting, setSubmitting] = useState<{ [key: number]: boolean }>({});
+  const [compiling, setCompiling] = useState(false);
   const [results, setResults] = useState<{ [key: number]: SubmissionResult }>({});
   const [loading, setLoading] = useState(true);
-  const [selectedProblem, setSelectedProblem] = useState<number>(1);
+  const [selectedProblem, setSelectedProblem] = useState<number | null>(null);
   const [competitionActive, setCompetitionActive] = useState(false);
   const [isBanned, setIsBanned] = useState(false);
   const [banMessage, setBanMessage] = useState("");
+  const [compileResult, setCompileResult] = useState<CompileResult | null>(null);
+  const [customInput, setCustomInput] = useState("");
+  const [showCompiler, setShowCompiler] = useState(false);
+  const [testResults, setTestResults] = useState<TestCaseResult[]>([]);
+  const [runningTests, setRunningTests] = useState(false);
+  const [problemLocked, setProblemLocked] = useState(false);
   
   // Anti-cheat states
   const [tabViolations, setTabViolations] = useState(0);
@@ -110,11 +147,20 @@ export default function TeamPage() {
       setProblems(data.problems);
       setTeamData(data.teamData);
       setLeaderboard(data.leaderboard);
+      
+      // Check if team has already selected a problem (single problem attempt)
+      if (data.teamData.selectedProblem) {
+        setSelectedProblem(data.teamData.selectedProblem);
+        setProblemLocked(true);
+      } else if (selectedProblem === null && data.problems.length > 0) {
+        setSelectedProblem(data.problems[0].id);
+      }
+      
       setLoading(false);
     } catch (error) {
       console.error("Fetch error:", error);
     }
-  }, [router, isBanned]);
+  }, [router, isBanned, selectedProblem]);
 
   // Fetch competition status
   const fetchCompetition = useCallback(async () => {
@@ -169,7 +215,7 @@ export default function TeamPage() {
   useEffect(() => {
     fetchData();
     fetchCompetition();
-    const dataInterval = setInterval(fetchData, 5000);
+    const dataInterval = setInterval(fetchData, 10000); // Reduced frequency to prevent session issues
     const timerInterval = setInterval(fetchCompetition, 1000);
     return () => {
       clearInterval(dataInterval);
@@ -198,7 +244,6 @@ export default function TeamPage() {
         tabViolationsRef.current += 1;
         setTabViolations(tabViolationsRef.current);
         setShowTabWarning(true);
-        // Report to server
         reportViolation("TAB_SWITCH", `Switched away from tab (violation #${tabViolationsRef.current})`);
       }
     };
@@ -212,13 +257,84 @@ export default function TeamPage() {
     const handleContextMenu = (e: MouseEvent) => {
       if (competitionActiveRef.current) {
         e.preventDefault();
-        // Report right-click attempt
         reportViolation("RIGHT_CLICK", "Attempted to open context menu");
       }
     };
     document.addEventListener("contextmenu", handleContextMenu);
     return () => document.removeEventListener("contextmenu", handleContextMenu);
   }, []);
+
+  // Compile code without submitting
+  const handleCompile = async () => {
+    if (!selectedProblem) return;
+    
+    setCompiling(true);
+    setCompileResult(null);
+    
+    try {
+      const res = await fetch("/api/compile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          code: codes[selectedProblem] || "",
+          language: languages[selectedProblem] || "python",
+          input: customInput,
+        }),
+        credentials: "include",
+      });
+
+      const data = await res.json();
+      setCompileResult(data);
+    } catch (error) {
+      console.error("Compile error:", error);
+      setCompileResult({
+        success: false,
+        error: "Failed to compile code. Please try again.",
+        status: "Error",
+      });
+    } finally {
+      setCompiling(false);
+    }
+  };
+
+  // Run test cases against code
+  const handleRunTests = async () => {
+    if (!selectedProblem) return;
+    
+    setRunningTests(true);
+    setTestResults([]);
+    
+    try {
+      const res = await fetch("/api/run-tests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          code: codes[selectedProblem] || "",
+          language: languages[selectedProblem] || "python",
+          problemId: selectedProblem,
+        }),
+        credentials: "include",
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        setTestResults(data.results);
+      }
+    } catch (error) {
+      console.error("Test run error:", error);
+    } finally {
+      setRunningTests(false);
+    }
+  };
+
+  // Lock problem selection when first submission is made
+  const handleSelectProblem = async (problemId: number) => {
+    if (problemLocked) {
+      // Can't change problem once locked
+      return;
+    }
+    setSelectedProblem(problemId);
+  };
 
   const handleSubmit = async (problemId: number) => {
     setSubmitting((prev) => ({ ...prev, [problemId]: true }));
@@ -231,6 +347,7 @@ export default function TeamPage() {
           problemId,
           code: codes[problemId] || "",
           language: languages[problemId] || "python",
+          lockProblem: !problemLocked, // Lock problem on first submission
         }),
         credentials: "include",
       });
@@ -244,8 +361,17 @@ export default function TeamPage() {
             problemId,
             passed: data.result.passed,
             message: data.result.message,
+            testsPassed: data.result.testsPassed,
+            totalTests: data.result.totalTests,
+            score: data.result.score,
           },
         }));
+        
+        // Lock problem after first submission
+        if (!problemLocked) {
+          setProblemLocked(true);
+        }
+        
         fetchData();
       }
     } catch (error) {
@@ -326,31 +452,78 @@ export default function TeamPage() {
 
       <div className="container">
         <div className="header">
-          <Image 
-            src="/logo.png" 
-            alt="Binary Battles 3.0" 
-            width={80} 
-            height={80}
-            className="header-logo"
-          />
+          <div 
+            style={{
+              width: 80,
+              height: 80,
+              background: "linear-gradient(135deg, #00d9ff, #ff6347)",
+              borderRadius: "50%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: "32px",
+              fontWeight: 700,
+              marginBottom: "8px",
+            }}
+          >
+            BB
+          </div>
           <h1>Binary Battles 3.0</h1>
           <p>Team: {teamName} | Score: {teamData.score} pts</p>
+          <p style={{ fontSize: "12px", color: "var(--text-muted)" }}>
+            Round 3: Code Relay
+          </p>
         </div>
+
+        {/* Problem Selection Notice */}
+        {!problemLocked && (
+          <div style={{
+            background: "rgba(255, 193, 7, 0.2)",
+            border: "1px solid rgba(255, 193, 7, 0.5)",
+            borderRadius: "8px",
+            padding: "12px 16px",
+            marginBottom: "16px",
+            fontSize: "14px",
+          }}>
+            <strong>📋 Important:</strong> You can only attempt ONE problem. Choose carefully! 
+            Once you submit, the problem will be locked.
+          </div>
+        )}
+
+        {problemLocked && (
+          <div style={{
+            background: "rgba(0, 217, 255, 0.2)",
+            border: "1px solid rgba(0, 217, 255, 0.5)",
+            borderRadius: "8px",
+            padding: "12px 16px",
+            marginBottom: "16px",
+            fontSize: "14px",
+          }}>
+            <strong>🔒 Problem Locked:</strong> You have selected Problem {selectedProblem}. 
+            Continue working on this problem.
+          </div>
+        )}
 
         {/* Problem Status Overview */}
         <div className="problem-status">
           <h3>Problems:</h3>
           {problems.map((p) => {
             const isSolved = teamData.solved?.includes(p.id);
-            const statusClass = isSolved ? "solved" : "";
+            const isSelected = selectedProblem === p.id;
+            const isLocked = problemLocked && !isSelected;
+            const statusClass = isSolved ? "solved" : isLocked ? "locked" : "";
             return (
               <div
                 key={p.id}
-                className={`status-indicator ${statusClass} ${selectedProblem === p.id ? "active" : ""}`}
-                onClick={() => setSelectedProblem(p.id)}
-                title={`Problem ${p.id}: ${p.title}`}
+                className={`status-indicator ${statusClass} ${isSelected ? "active" : ""}`}
+                onClick={() => !isLocked && handleSelectProblem(p.id)}
+                title={isLocked ? "Problem locked - You can only attempt one problem" : `Problem ${p.id}: ${p.title}`}
+                style={{ 
+                  cursor: isLocked ? "not-allowed" : "pointer",
+                  opacity: isLocked ? 0.5 : 1,
+                }}
               >
-                {p.id}
+                {isSolved ? "✓" : isLocked ? "🔒" : p.id}
               </div>
             );
           })}
@@ -362,16 +535,28 @@ export default function TeamPage() {
           <div className="problems-sidebar">
             {problems.map((problem) => {
               const isSolved = teamData.solved?.includes(problem.id);
+              const isSelected = selectedProblem === problem.id;
+              const isLocked = problemLocked && !isSelected;
+              
               return (
                 <div
                   key={problem.id}
-                  className={`problem-list-item ${selectedProblem === problem.id ? "active" : ""}`}
-                  onClick={() => setSelectedProblem(problem.id)}
+                  className={`problem-list-item ${isSelected ? "active" : ""}`}
+                  onClick={() => !isLocked && handleSelectProblem(problem.id)}
+                  style={{ 
+                    cursor: isLocked ? "not-allowed" : "pointer",
+                    opacity: isLocked ? 0.5 : 1,
+                  }}
                 >
                   <span className={`problem-number ${isSolved ? "solved" : ""}`}>
-                    {isSolved ? "✓" : problem.id}
+                    {isSolved ? "✓" : isLocked ? "🔒" : problem.id}
                   </span>
                   <span className="problem-title">{problem.title}</span>
+                  {problem.difficulty && (
+                    <span className={`difficulty-badge ${problem.difficulty}`}>
+                      {problem.difficulty}
+                    </span>
+                  )}
                 </div>
               );
             })}
@@ -384,7 +569,18 @@ export default function TeamPage() {
                 <div className="problem-description">
                   <h2>Problem {currentProblem.id}: {currentProblem.title}</h2>
                   
-                  <p className="description">{currentProblem.description}</p>
+                  <p className="description" style={{ whiteSpace: "pre-wrap" }}>
+                    {currentProblem.description}
+                  </p>
+                  
+                  {currentProblem.constraints && (
+                    <>
+                      <div className="section-title">Constraints</div>
+                      <pre style={{ background: "rgba(0,0,0,0.2)", padding: "12px", borderRadius: "6px" }}>
+                        {currentProblem.constraints}
+                      </pre>
+                    </>
+                  )}
                   
                   <div className="section-title">Input Format</div>
                   <pre>{currentProblem.input}</pre>
@@ -397,6 +593,11 @@ export default function TeamPage() {
                     <div key={idx} className="example-box">
                       <div className="example-label">Example {idx + 1}</div>
                       <pre>Input:{"\n"}{ex.input}{"\n\n"}Output:{"\n"}{ex.output}</pre>
+                      {ex.explanation && (
+                        <p style={{ marginTop: "8px", fontSize: "13px", color: "var(--text-muted)" }}>
+                          <strong>Explanation:</strong> {ex.explanation}
+                        </p>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -404,21 +605,34 @@ export default function TeamPage() {
                 <div className="code-editor-container">
                   <div className="code-editor-header">
                     <span style={{ fontWeight: 600, fontSize: "14px" }}>Code Editor</span>
-                    <select
-                      className="language-select"
-                      value={languages[currentProblem.id] || "python"}
-                      onChange={(e) =>
-                        setLanguages((prev) => ({
-                          ...prev,
-                          [currentProblem.id]: e.target.value,
-                        }))
-                      }
-                    >
-                      <option value="python">Python</option>
-                      <option value="cpp">C++</option>
-                      <option value="java">Java</option>
-                      <option value="c">C</option>
-                    </select>
+                    <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                      <select
+                        className="language-select"
+                        value={languages[currentProblem.id] || "python"}
+                        onChange={(e) =>
+                          setLanguages((prev) => ({
+                            ...prev,
+                            [currentProblem.id]: e.target.value,
+                          }))
+                        }
+                      >
+                        <option value="python">Python</option>
+                        <option value="cpp">C++</option>
+                        <option value="java">Java</option>
+                        <option value="c">C</option>
+                        <option value="javascript">JavaScript</option>
+                      </select>
+                      <button
+                        className="btn btn-small"
+                        onClick={() => setShowCompiler(!showCompiler)}
+                        style={{ 
+                          background: showCompiler ? "var(--accent-primary)" : "transparent",
+                          border: "1px solid var(--accent-primary)",
+                        }}
+                      >
+                        {showCompiler ? "Hide Compiler" : "Show Compiler"}
+                      </button>
+                    </div>
                   </div>
                   
                   <div className="code-editor">
@@ -435,6 +649,137 @@ export default function TeamPage() {
                     />
                   </div>
 
+                  {/* Compiler Section */}
+                  {showCompiler && (
+                    <div className="compiler-section" style={{
+                      background: "var(--card-bg)",
+                      border: "1px solid var(--border-color)",
+                      borderRadius: "8px",
+                      padding: "16px",
+                      marginTop: "12px",
+                    }}>
+                      <h4 style={{ marginBottom: "12px" }}>🖥️ Compiler & Test Runner</h4>
+                      
+                      <div style={{ marginBottom: "12px" }}>
+                        <label style={{ fontSize: "13px", marginBottom: "4px", display: "block" }}>
+                          Custom Input (optional):
+                        </label>
+                        <textarea
+                          value={customInput}
+                          onChange={(e) => setCustomInput(e.target.value)}
+                          placeholder="Enter custom input for testing..."
+                          style={{
+                            width: "100%",
+                            height: "80px",
+                            background: "var(--bg-primary)",
+                            border: "1px solid var(--border-color)",
+                            borderRadius: "6px",
+                            padding: "8px",
+                            color: "var(--text-primary)",
+                            fontFamily: "monospace",
+                            fontSize: "13px",
+                            resize: "vertical",
+                          }}
+                        />
+                      </div>
+                      
+                      <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
+                        <button
+                          className="btn btn-small"
+                          onClick={handleCompile}
+                          disabled={compiling}
+                          style={{ background: "var(--accent-success)" }}
+                        >
+                          {compiling ? "Compiling..." : "▶ Run Code"}
+                        </button>
+                        <button
+                          className="btn btn-small"
+                          onClick={handleRunTests}
+                          disabled={runningTests}
+                          style={{ background: "var(--accent-warning)" }}
+                        >
+                          {runningTests ? "Running..." : "🧪 Run Test Cases"}
+                        </button>
+                      </div>
+
+                      {/* Compile Result */}
+                      {compileResult && (
+                        <div style={{
+                          background: compileResult.error ? "rgba(244, 67, 54, 0.1)" : "rgba(76, 175, 80, 0.1)",
+                          border: `1px solid ${compileResult.error ? "rgba(244, 67, 54, 0.5)" : "rgba(76, 175, 80, 0.5)"}`,
+                          borderRadius: "6px",
+                          padding: "12px",
+                          marginBottom: "12px",
+                        }}>
+                          <div style={{ fontWeight: 600, marginBottom: "8px" }}>
+                            Status: {compileResult.status || (compileResult.success ? "Success" : "Error")}
+                          </div>
+                          {compileResult.output && (
+                            <pre style={{ 
+                              background: "rgba(0,0,0,0.2)", 
+                              padding: "8px", 
+                              borderRadius: "4px",
+                              whiteSpace: "pre-wrap",
+                              fontSize: "13px",
+                            }}>
+                              {compileResult.output}
+                            </pre>
+                          )}
+                          {compileResult.error && (
+                            <pre style={{ 
+                              color: "#f44336",
+                              whiteSpace: "pre-wrap",
+                              fontSize: "13px",
+                            }}>
+                              {compileResult.error}
+                            </pre>
+                          )}
+                          {compileResult.time && (
+                            <div style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "8px" }}>
+                              Time: {compileResult.time} | Memory: {compileResult.memory}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Test Results */}
+                      {testResults.length > 0 && (
+                        <div style={{
+                          background: "rgba(0,0,0,0.2)",
+                          borderRadius: "6px",
+                          padding: "12px",
+                        }}>
+                          <div style={{ fontWeight: 600, marginBottom: "8px" }}>
+                            Test Results: {testResults.filter(r => r.passed).length}/{testResults.length} passed
+                          </div>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
+                            {testResults.map((result) => (
+                              <div
+                                key={result.testCaseNumber}
+                                title={result.isHidden ? "Hidden test case" : `Test ${result.testCaseNumber}`}
+                                style={{
+                                  width: "24px",
+                                  height: "24px",
+                                  borderRadius: "4px",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  fontSize: "11px",
+                                  fontWeight: 600,
+                                  background: result.passed ? "rgba(76, 175, 80, 0.3)" : "rgba(244, 67, 54, 0.3)",
+                                  color: result.passed ? "#4caf50" : "#f44336",
+                                  border: result.isHidden ? "1px dashed currentColor" : "none",
+                                }}
+                              >
+                                {result.passed ? "✓" : "✗"}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   <div className="code-editor-footer">
                     {results[currentProblem.id] && (
                       <div
@@ -443,8 +788,13 @@ export default function TeamPage() {
                         }`}
                       >
                         {results[currentProblem.id].passed
-                          ? "✓ Accepted (+10 pts)"
+                          ? `✓ Accepted (Score: ${results[currentProblem.id].score || 0})`
                           : `✗ ${results[currentProblem.id].message}`}
+                        {results[currentProblem.id].testsPassed !== undefined && (
+                          <span style={{ marginLeft: "8px", fontSize: "12px" }}>
+                            ({results[currentProblem.id].testsPassed}/{results[currentProblem.id].totalTests} tests)
+                          </span>
+                        )}
                       </div>
                     )}
                     <div style={{ flex: 1 }} />
@@ -454,7 +804,7 @@ export default function TeamPage() {
                       disabled={submitting[currentProblem.id] || !competitionActive}
                       style={{ width: "auto", minWidth: "140px" }}
                     >
-                      {submitting[currentProblem.id] ? "Submitting..." : "Submit"}
+                      {submitting[currentProblem.id] ? "Submitting..." : "Submit Solution"}
                     </button>
                   </div>
                 </div>
@@ -497,6 +847,39 @@ export default function TeamPage() {
           </table>
         </div>
 
+        {/* Judging Criteria */}
+        <div style={{
+          background: "var(--card-bg)",
+          border: "1px solid var(--border-color)",
+          borderRadius: "12px",
+          padding: "20px",
+          marginTop: "24px",
+        }}>
+          <h3 style={{ marginBottom: "16px" }}>📋 Round 3: Code Relay - Judging Criteria</h3>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "12px" }}>
+            <div className="criteria-item">
+              <span>Correctness & Output Accuracy</span>
+              <span className="criteria-value">30%</span>
+            </div>
+            <div className="criteria-item">
+              <span>Code Continuity</span>
+              <span className="criteria-value">20%</span>
+            </div>
+            <div className="criteria-item">
+              <span>Efficiency & Optimization</span>
+              <span className="criteria-value">30%</span>
+            </div>
+            <div className="criteria-item">
+              <span>Debugging & Error Handling</span>
+              <span className="criteria-value">10%</span>
+            </div>
+            <div className="criteria-item">
+              <span>Relay Discipline & Compliance</span>
+              <span className="criteria-value">10%</span>
+            </div>
+          </div>
+        </div>
+
         {/* Violations Counter */}
         {tabViolations > 0 && (
           <div
@@ -517,6 +900,40 @@ export default function TeamPage() {
           </div>
         )}
       </div>
+
+      <style jsx>{`
+        .criteria-item {
+          display: flex;
+          justify-content: space-between;
+          padding: 12px;
+          background: rgba(0, 0, 0, 0.2);
+          border-radius: 8px;
+          font-size: 14px;
+        }
+        .criteria-value {
+          font-weight: 600;
+          color: var(--accent-primary);
+        }
+        .difficulty-badge {
+          font-size: 10px;
+          padding: 2px 6px;
+          border-radius: 4px;
+          text-transform: uppercase;
+          font-weight: 600;
+        }
+        .difficulty-badge.easy {
+          background: rgba(76, 175, 80, 0.2);
+          color: #4caf50;
+        }
+        .difficulty-badge.medium {
+          background: rgba(255, 193, 7, 0.2);
+          color: #ffc107;
+        }
+        .difficulty-badge.hard {
+          background: rgba(244, 67, 54, 0.2);
+          color: #f44336;
+        }
+      `}</style>
     </>
   );
 }

@@ -10,6 +10,7 @@ import {
   getCompetitionStats,
   getViolationCount,
 } from "@/lib/database";
+import { problems } from "@/lib/data";
 import { cookies } from "next/headers";
 
 // Disable caching for admin endpoint
@@ -59,6 +60,14 @@ export async function GET() {
       };
     });
 
+    // Include problem solutions for judge assessment
+    const problemSolutions = problems.map(p => ({
+      id: p.id,
+      title: p.title,
+      solution: p.solution,
+      solutionLanguage: p.solutionLanguage,
+    }));
+
     return NextResponse.json({
       success: true,
       isMasterAdmin: session.user.isMasterAdmin || false,
@@ -68,6 +77,7 @@ export async function GET() {
       leaderboard: leaderboard,
       violations: violations,
       stats: stats,
+      problemSolutions: problemSolutions,
     });
   } catch (error) {
     console.error("Admin API error:", error);

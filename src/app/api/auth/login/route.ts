@@ -1,89 +1,73 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getIronSession } from "iron-session";
 import { sessionOptions, SessionData, generateSessionId } from "@/lib/session";
-import { validateTeamCredentials, isTeamBanned } from "@/lib/database";
+import { validateTeamCredentials, isTeamBanned, validateTeamByRegistration } from "@/lib/database";
 import { cookies } from "next/headers";
 
 // Disable caching for login endpoint
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-// Simple in-memory rate limiting to prevent brute force attacks
-const loginAttempts: Map<string, { count: number; lastAttempt: number }> = new Map();
-const MAX_ATTEMPTS = 5;
-const LOCKOUT_TIME = 15 * 60 * 1000; // 15 minutes
-
-function getClientIP(request: NextRequest): string {
-  const forwarded = request.headers.get("x-forwarded-for");
-  const realIp = request.headers.get("x-real-ip");
-  return forwarded?.split(",")[0]?.trim() || realIp || "unknown";
-}
-
-function checkRateLimit(ip: string): { allowed: boolean; remainingTime?: number } {
-  const attempt = loginAttempts.get(ip);
-  const now = Date.now();
-  
-  if (!attempt) {
-    return { allowed: true };
-  }
-  
-  // Reset if lockout has expired
-  if (now - attempt.lastAttempt > LOCKOUT_TIME) {
-    loginAttempts.delete(ip);
-    return { allowed: true };
-  }
-  
-  if (attempt.count >= MAX_ATTEMPTS) {
-    const remainingTime = Math.ceil((LOCKOUT_TIME - (now - attempt.lastAttempt)) / 1000 / 60);
-    return { allowed: false, remainingTime };
-  }
-  
-  return { allowed: true };
-}
-
-function recordFailedAttempt(ip: string): void {
-  const attempt = loginAttempts.get(ip);
-  const now = Date.now();
-  
-  if (!attempt || now - attempt.lastAttempt > LOCKOUT_TIME) {
-    loginAttempts.set(ip, { count: 1, lastAttempt: now });
-  } else {
-    loginAttempts.set(ip, { count: attempt.count + 1, lastAttempt: now });
-  }
-}
-
-function clearFailedAttempts(ip: string): void {
-  loginAttempts.delete(ip);
-}
+// Rate limiting DISABLED to prevent "too many attempts" errors
+// Teams can login freely without rate limiting restrictions
 
 export async function POST(request: NextRequest) {
   try {
-    const clientIP = getClientIP(request);
-    
-    // Check rate limit
-    const rateLimit = checkRateLimit(clientIP);
-    if (!rateLimit.allowed) {
-      return NextResponse.json(
-        { success: false, message: `Too many failed attempts. Try again in ${rateLimit.remainingTime} minutes.` },
-        { status: 429 }
-      );
-    }
-    
-    const { username, password } = await request.json();
+    const { username, password, registrationOnly } = await request.json();
 
-    if (!username || !password) {
+    // Allow login with just registration number (no password) for participants
+    if (registrationOnly && username) {
+      const session = await getIronSession<SessionData>(await cookies(), sessionOptions);
+      
+      // Validate by registration number only
+      const result = validateTeamByRegistration(username.trim());
+      
+      if (!result.valid) {
+        return NextResponse.json(
+          { success: false, message: "Registration number not found. Please contact admin." },
+          { status: 401 }
+        );
+      }
+      
+      // Check if team is banned
+      if (isTeamBanned(result.actualName)) {
+        return NextResponse.json(
+          { success: false, message: "Your team has been banned from the competition" },
+          { status: 403 }
+        );
+      }
+      
+      // Generate unique session ID for this login
+      const sessionId = generateSessionId();
+      const allowedPath = "/team";
+
+      // Store session
+      session.user = { 
+        name: result.actualName, 
+        isAdmin: false, 
+        isMasterAdmin: false, 
+        sessionId, 
+        allowedPath 
+      };
+      await session.save();
+      
+      return NextResponse.json({ success: true, isAdmin: false, isMasterAdmin: false, sessionId });
+    }
+
+    // Traditional login with username and password (for admins)
+    if (!username) {
       return NextResponse.json(
-        { success: false, message: "Username and password required" },
+        { success: false, message: "Registration number required" },
         { status: 400 }
       );
     }
 
     const session = await getIronSession<SessionData>(await cookies(), sessionOptions);
 
-    const { valid, isAdmin, isMasterAdmin, actualName } = validateTeamCredentials(username, password);
+    // For admin login, password is required
+    const { valid, isAdmin, isMasterAdmin, actualName } = validateTeamCredentials(username, password || "");
 
     if (!valid) {
-      recordFailedAttempt(clientIP);
       return NextResponse.json(
         { success: false, message: "Invalid credentials" },
         { status: 401 }
@@ -97,9 +81,6 @@ export async function POST(request: NextRequest) {
         { status: 403 }
       );
     }
-
-    // Clear failed attempts on successful login
-    clearFailedAttempts(clientIP);
 
     // Generate unique session ID for this login
     const sessionId = generateSessionId();

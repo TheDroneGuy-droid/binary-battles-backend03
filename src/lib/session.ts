@@ -18,13 +18,13 @@ export function generateSessionId(): string {
 // Use environment variable for production, fallback to default for development
 const SESSION_SECRET = process.env.SESSION_SECRET || "binary-battles-secret-key-that-is-at-least-32-chars";
 
-// Session TTL: 20 minutes in seconds
-const SESSION_TTL = 20 * 60;
+// Session TTL: 8 hours in seconds (extended to prevent auto-logout)
+const SESSION_TTL = 8 * 60 * 60;
 
 export const sessionOptions: SessionOptions = {
   password: SESSION_SECRET,
   cookieName: "binary-battles-session",
-  ttl: SESSION_TTL, // Session expires after 20 minutes
+  ttl: SESSION_TTL, // Session expires after 8 hours
   cookieOptions: {
     secure: process.env.NODE_ENV === "production",
     httpOnly: true, // Prevents JavaScript access to cookie

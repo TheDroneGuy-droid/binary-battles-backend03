@@ -107,6 +107,13 @@ try {
   db.exec("ALTER TABLE teams ADD COLUMN is_master_admin INTEGER DEFAULT 0");
 }
 
+// Migration: Add selected_problem column if it doesn't exist
+try {
+  db.prepare("SELECT selected_problem FROM teams LIMIT 1").get();
+} catch {
+  db.exec("ALTER TABLE teams ADD COLUMN selected_problem INTEGER DEFAULT NULL");
+}
+
 // Initialize competition row if not exists
 const initCompetition = db.prepare(
   "INSERT OR IGNORE INTO competition (id, duration) VALUES (1, 120)"
@@ -139,12 +146,13 @@ export interface Team {
   team_size: number;
   registration_numbers: string;
   is_banned: boolean;
+  selectedProblem?: number;
 }
 
 export function getTeam(name: string): Team | null {
   const team = db
     .prepare("SELECT * FROM teams WHERE name = ?")
-    .get(name) as { name: string; password: string; plain_password: string; is_admin: number; score: number; team_size: number; registration_numbers: string; is_banned?: number } | undefined;
+    .get(name) as { name: string; password: string; plain_password: string; is_admin: number; score: number; team_size: number; registration_numbers: string; is_banned?: number; selected_problem?: number } | undefined;
 
   if (!team) return null;
 
@@ -166,6 +174,7 @@ export function getTeam(name: string): Team | null {
     team_size: team.team_size || 1,
     registration_numbers: team.registration_numbers || "",
     is_banned: team.is_banned === 1,
+    selectedProblem: team.selected_problem || undefined,
   };
 }
 
@@ -256,6 +265,10 @@ export function deleteTeam(name: string): boolean {
 
 export function updateTeamScore(name: string, score: number): void {
   db.prepare("UPDATE teams SET score = ? WHERE name = ?").run(score, name);
+}
+
+export function setSelectedProblem(name: string, problemId: number): void {
+  db.prepare("UPDATE teams SET selected_problem = ? WHERE name = ?").run(problemId, name);
 }
 
 export function banTeam(name: string): boolean {
@@ -548,6 +561,39 @@ export function validateTeamCredentials(
     isMasterAdmin: team.is_master_admin === 1,
     actualName: team.name 
   };
+}
+
+// Validate team by registration number only (passwordless login for participants)
+export function validateTeamByRegistration(
+  registrationNumber: string
+): { valid: boolean; actualName: string } {
+  const normalizedReg = registrationNumber.trim().toLowerCase();
+  
+  // Try to find team by registration number
+  let team = db
+    .prepare("SELECT name, is_admin FROM teams WHERE LOWER(registration_numbers) = ?")
+    .get(normalizedReg) as { name: string; is_admin: number } | undefined;
+
+  // If not found by exact match, try partial match (in case of multiple registration numbers)
+  if (!team) {
+    team = db
+      .prepare("SELECT name, is_admin FROM teams WHERE LOWER(registration_numbers) LIKE ?")
+      .get(`%${normalizedReg}%`) as { name: string; is_admin: number } | undefined;
+  }
+  
+  // Also try matching by team name for convenience
+  if (!team) {
+    team = db
+      .prepare("SELECT name, is_admin FROM teams WHERE LOWER(name) = ? AND is_admin = 0")
+      .get(normalizedReg) as { name: string; is_admin: number } | undefined;
+  }
+
+  if (!team || team.is_admin === 1) {
+    // Don't allow passwordless login for admins
+    return { valid: false, actualName: "" };
+  }
+
+  return { valid: true, actualName: team.name };
 }
 
 // ============ Admin Management (Master Admin Only) ============

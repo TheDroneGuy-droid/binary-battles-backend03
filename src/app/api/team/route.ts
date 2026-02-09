@@ -44,6 +44,7 @@ export async function GET() {
     const teamData = {
       score: team.score,
       solved: team.solved,
+      selectedProblem: team.selectedProblem,
     };
 
     const leaderboard = getLeaderboard().map((entry) => ({

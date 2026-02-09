@@ -7,6 +7,7 @@ import {
   addSolvedProblem,
   addFailedProblem,
   updateTeamScore,
+  setSelectedProblem,
 } from "@/lib/database";
 
 // Disable caching
@@ -25,8 +26,9 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { problemId, code, language, autoSave } = await request.json();
-  const problem = problems.find((p) => p.id === parseInt(problemId));
+  const { problemId, code, language, autoSave, lockProblem } = await request.json();
+  const parsedProblemId = parseInt(problemId);
+  const problem = problems.find((p) => p.id === parsedProblemId);
 
   if (!problem) {
     return NextResponse.json(
@@ -36,32 +38,7 @@ export async function POST(request: NextRequest) {
   }
 
   const teamName = session.user.name;
-
-  // If auto-save, just save the code without evaluation
-  if (autoSave) {
-    addSubmission(
-      teamName,
-      parseInt(problemId),
-      code,
-      language,
-      false,
-      "Auto-saved draft"
-    );
-    return NextResponse.json({ success: true, autoSave: true });
-  }
-
-  const result = autoCorrect(code, problem, language);
-
-  // Add submission to database
-  addSubmission(
-    teamName,
-    parseInt(problemId),
-    code,
-    language,
-    result.passed,
-    result.message
-  );
-
+  
   // Get current team data
   const team = getTeam(teamName);
   if (!team) {
@@ -71,15 +48,54 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // Check if team has already selected a different problem
+  if (team.selectedProblem && team.selectedProblem !== parsedProblemId) {
+    return NextResponse.json(
+      { success: false, message: `You can only attempt Problem ${team.selectedProblem}. You cannot change your selected problem.` },
+      { status: 403 }
+    );
+  }
+
+  // If auto-save, just save the code without evaluation
+  if (autoSave) {
+    addSubmission(
+      teamName,
+      parsedProblemId,
+      code,
+      language,
+      false,
+      "Auto-saved draft"
+    );
+    return NextResponse.json({ success: true, autoSave: true });
+  }
+
+  // Lock problem selection on first real submission
+  if (lockProblem && !team.selectedProblem) {
+    setSelectedProblem(teamName, parsedProblemId);
+  }
+
+  const result = autoCorrect(code, problem, language);
+
+  // Add submission to database
+  addSubmission(
+    teamName,
+    parsedProblemId,
+    code,
+    language,
+    result.passed,
+    result.message
+  );
+
   if (result.passed) {
-    if (!team.solved.includes(parseInt(problemId))) {
-      // Update score and mark as solved
-      updateTeamScore(teamName, team.score + 10);
-      addSolvedProblem(teamName, parseInt(problemId));
+    if (!team.solved.includes(parsedProblemId)) {
+      // Calculate score based on test cases passed
+      const earnedScore = result.score || 10;
+      updateTeamScore(teamName, team.score + earnedScore);
+      addSolvedProblem(teamName, parsedProblemId);
     }
   } else {
-    if (!team.solved.includes(parseInt(problemId))) {
-      addFailedProblem(teamName, parseInt(problemId));
+    if (!team.solved.includes(parsedProblemId)) {
+      addFailedProblem(teamName, parsedProblemId);
     }
   }
 
