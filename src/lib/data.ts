@@ -166,6 +166,40 @@ export const problems: Problem[] = [
       { input: "8", output: "0 1 1 2 3 5 8 13" },
     ],
   },
+  {
+    id: 7,
+    title: "Token Merge Validation",
+    description: "Given a string of tokens separated by spaces, validate if consecutive duplicate tokens can be merged. Print 'VALID' if no consecutive duplicates exist, otherwise print    'INVALID' followed by the first duplicate token.",
+    input: "A single line containing tokens separated by spaces (1 ≤ number of tokens ≤ 100, each token length ≤ 20)",
+    output: "Print 'VALID' if no consecutive duplicates, or 'INVALID: <token>' where <token> is the first consecutive duplicate",
+    examples: [
+      { input: "hello world test", output: "VALID" },
+      { input: "foo bar bar baz", output: "INVALID: bar" },
+      { input: "a b c c d", output: "INVALID: c" },
+      { input: "single", output: "VALID" },
+     ],
+   },
+   {
+     id: 8,
+     title: "Block Grid Packing",
+     description: "Given a grid of size M x N and a list of rectangular blocks with dimensions, determine if all blocks can fit in the grid without overlapping. Blocks cannot be rotated.",
+     input: "First line: M N (grid dimensions, 1 ≤ M, N ≤ 10). Second line: K (number of blocks, 1 ≤ K ≤ 20). Next K lines: width height of each block.",
+     output: "Print 'YES' if all blocks can be packed in the grid, otherwise 'NO'",
+     examples: [
+       { 
+         input: "5 5\n3\n2 2\n3 1\n2 3", 
+         output: "YES" 
+       },
+       { 
+         input: "3 3\n2\n2 2\n2 2", 
+         output: "NO" 
+       },
+       { 
+         input: "4 4\n4\n2 2\n2 2\n2 2\n2 2", 
+         output: "YES" 
+       },
+     ],
+  },   
 ];
 
 // Language configurations with compiler/interpreter info
