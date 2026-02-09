@@ -4,6 +4,10 @@ import { sessionOptions, SessionData } from "@/lib/session";
 import { executeQuery, getTableSchema } from "@/lib/database";
 import { cookies } from "next/headers";
 
+// Disable caching
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 // Get database schema (master admin only)
 export async function GET() {
   try {

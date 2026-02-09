@@ -4,6 +4,10 @@ import { sessionOptions, SessionData } from "@/lib/session";
 import { addTeam, getTeam } from "@/lib/database";
 import { cookies } from "next/headers";
 
+// Disable caching
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 // Normalize team name: lowercase, replace spaces with dashes
 function normalizeTeamName(name: string): string {
   return name

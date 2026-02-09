@@ -8,6 +8,10 @@ import {
   addFailedProblem,
   updateTeamScore,
 } from "@/lib/database";
+
+// Disable caching
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 import { problems, autoCorrect } from "@/lib/data";
 import { cookies } from "next/headers";
 

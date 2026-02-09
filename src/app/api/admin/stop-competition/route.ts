@@ -4,6 +4,10 @@ import { sessionOptions, SessionData } from "@/lib/session";
 import { stopCompetition } from "@/lib/database";
 import { cookies } from "next/headers";
 
+// Disable caching
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export async function POST() {
   const session = await getIronSession<SessionData>(await cookies(), sessionOptions);
 

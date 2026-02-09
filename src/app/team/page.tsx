@@ -75,7 +75,10 @@ export default function TeamPage() {
     if (hasRedirected.current) return;
     
     try {
-      const res = await fetch("/api/team");
+      const res = await fetch("/api/team", {
+        credentials: "include",
+        cache: "no-store",
+      });
       const data = await res.json();
 
       if (!data.success) {
@@ -117,7 +120,10 @@ export default function TeamPage() {
   // Fetch competition status
   const fetchCompetition = useCallback(async () => {
     try {
-      const res = await fetch("/api/competition");
+      const res = await fetch("/api/competition", {
+        credentials: "include",
+        cache: "no-store",
+      });
       const data = await res.json();
       setCompetition(data);
       
@@ -179,6 +185,7 @@ export default function TeamPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ violationType, details }),
+        credentials: "include",
       });
     } catch (error) {
       console.error("Failed to report violation:", error);
@@ -226,6 +233,7 @@ export default function TeamPage() {
           code: codes[problemId] || "",
           language: languages[problemId] || "python",
         }),
+        credentials: "include",
       });
 
       const data = await res.json();

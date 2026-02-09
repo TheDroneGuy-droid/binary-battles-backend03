@@ -160,7 +160,7 @@ export default function AdminPage() {
       // Fetch master admin specific data
       if (data.isMasterAdmin && isFirstLoad.current) {
         // Fetch admins list
-        fetch("/api/admin/manage-admins")
+        fetch("/api/admin/manage-admins", { credentials: "include" })
           .then(res => res.json())
           .then(adminData => {
             if (adminData.success) {
@@ -170,7 +170,7 @@ export default function AdminPage() {
           .catch(console.error);
         
         // Fetch database schema
-        fetch("/api/admin/database")
+        fetch("/api/admin/database", { credentials: "include" })
           .then(res => res.json())
           .then(schemaData => {
             if (schemaData.success) {
@@ -293,6 +293,7 @@ export default function AdminPage() {
           password: newTeamPassword,
           teamSize: newTeamSize,
         }),
+        credentials: "include",
       });
       setNewTeamName("");
       setNewTeamPassword("");
@@ -338,6 +339,7 @@ export default function AdminPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ teams }),
+        credentials: "include",
       });
 
       const data = await res.json();
@@ -364,6 +366,7 @@ export default function AdminPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ teamName }),
+        credentials: "include",
       });
       const data = await res.json();
       if (!data.success) {
@@ -385,6 +388,7 @@ export default function AdminPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ teamName, action }),
+        credentials: "include",
       });
       const data = await res.json();
       if (!data.success) {
@@ -410,6 +414,7 @@ export default function AdminPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ duration: durationToUse }),
+        credentials: "include",
       });
       const data = await res.json();
       if (!data.success) {
@@ -426,6 +431,7 @@ export default function AdminPage() {
     try {
       await fetch("/api/admin/stop-competition", {
         method: "POST",
+        credentials: "include",
       });
       fetchData();
     } catch (error) {
@@ -459,6 +465,7 @@ export default function AdminPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "add", username: newAdminName, password: newAdminPassword }),
+        credentials: "include",
       });
       const data = await res.json();
       setDbActionMessage(data.message);
@@ -466,7 +473,7 @@ export default function AdminPage() {
         setNewAdminName("");
         setNewAdminPassword("");
         // Refresh admins list
-        const adminsRes = await fetch("/api/admin/manage-admins");
+        const adminsRes = await fetch("/api/admin/manage-admins", { credentials: "include" });
         const adminsData = await adminsRes.json();
         if (adminsData.success) setAdmins(adminsData.admins);
       }
@@ -484,11 +491,12 @@ export default function AdminPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "remove", username }),
+        credentials: "include",
       });
       const data = await res.json();
       setDbActionMessage(data.message);
       if (data.success) {
-        const adminsRes = await fetch("/api/admin/manage-admins");
+        const adminsRes = await fetch("/api/admin/manage-admins", { credentials: "include" });
         const adminsData = await adminsRes.json();
         if (adminsData.success) setAdmins(adminsData.admins);
       }
@@ -509,6 +517,7 @@ export default function AdminPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query: sqlQuery }),
+        credentials: "include",
       });
       const data = await res.json();
       setQueryResult(data);
@@ -527,6 +536,7 @@ export default function AdminPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query: `SELECT * FROM ${tableName} LIMIT 100` }),
+        credentials: "include",
       });
       const data = await res.json();
       setQueryResult(data);
@@ -537,7 +547,7 @@ export default function AdminPage() {
 
   const refreshSchema = async () => {
     try {
-      const res = await fetch("/api/admin/database");
+      const res = await fetch("/api/admin/database", { credentials: "include" });
       const data = await res.json();
       if (data.success) {
         setDbSchema({ tables: data.tables, schema: data.schema });
@@ -961,7 +971,7 @@ export default function AdminPage() {
                     style={{ background: "#dc2626" }}
                     onClick={async () => {
                       if (confirm("Clear all violations?")) {
-                        await fetch("/api/violations", { method: "DELETE" });
+                        await fetch("/api/violations", { method: "DELETE", credentials: "include" });
                         fetchData();
                       }
                     }}

@@ -4,6 +4,10 @@ import { sessionOptions, SessionData } from "@/lib/session";
 import { addTeam, getTeam } from "@/lib/database";
 import { cookies } from "next/headers";
 
+// Disable caching
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 interface TeamRow {
   registration_number: string;
   phone_number: string;

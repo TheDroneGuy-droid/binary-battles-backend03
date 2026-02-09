@@ -23,7 +23,11 @@ export default function LoginPage() {
     
     const checkSession = async () => {
       try {
-        const res = await fetch("/api/auth/session", { signal: controller.signal });
+        const res = await fetch("/api/auth/session", { 
+          signal: controller.signal,
+          credentials: "include",
+          cache: "no-store",
+        });
         
         if (!res.ok) {
           setCheckingSession(false);
@@ -101,6 +105,8 @@ export default function LoginPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: trimmedUsername, password }),
+        credentials: "include",
+        cache: "no-store",
       });
 
       const data = await res.json();

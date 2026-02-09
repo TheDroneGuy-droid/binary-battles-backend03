@@ -4,6 +4,10 @@ import { sessionOptions, SessionData } from "@/lib/session";
 import { addViolation, getViolations, getViolationCount, clearViolations } from "@/lib/database";
 import { cookies } from "next/headers";
 
+// Disable caching
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 // Report a violation (from team page)
 export async function POST(request: NextRequest) {
   try {
