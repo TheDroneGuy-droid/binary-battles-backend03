@@ -118,6 +118,9 @@ export default function LoginPage() {
       const data = await res.json();
 
       if (data.success) {
+        // Small delay to ensure cookie is properly set before redirect
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
         if (data.isAdmin) {
           router.replace("/admin");
         } else {

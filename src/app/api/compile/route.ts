@@ -8,139 +8,126 @@ import { problems } from "@/lib/data";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-// Judge0 API configuration - using public instance
-const JUDGE0_API_URL = process.env.JUDGE0_API_URL || "https://judge0-ce.p.rapidapi.com";
-const JUDGE0_API_KEY = process.env.JUDGE0_API_KEY || "";
-const JUDGE0_API_HOST = process.env.JUDGE0_API_HOST || "judge0-ce.p.rapidapi.com";
+// Piston API - Free code execution API (no API key required)
+const PISTON_API_URL = "https://emkc.org/api/v2/piston/execute";
 
-// Language IDs for Judge0
-const LANGUAGE_IDS: Record<string, number> = {
-  python: 71,      // Python 3.8.1
-  cpp: 54,         // C++ (GCC 9.2.0)
-  c: 50,           // C (GCC 9.2.0)
-  java: 62,        // Java (OpenJDK 13.0.1)
-  javascript: 63,  // JavaScript (Node.js 12.14.0)
-  typescript: 74,  // TypeScript (3.7.4)
-  csharp: 51,      // C# (Mono 6.6.0.161)
-  go: 60,          // Go (1.13.5)
-  rust: 73,        // Rust (1.40.0)
-  ruby: 72,        // Ruby (2.7.0)
-  kotlin: 78,      // Kotlin (1.3.70)
-  swift: 83,       // Swift (5.2.3)
+// Language configurations for Piston API
+const PISTON_LANGUAGES: Record<string, { language: string; version: string }> = {
+  python: { language: "python", version: "3.10.0" },
+  cpp: { language: "c++", version: "10.2.0" },
+  c: { language: "c", version: "10.2.0" },
+  java: { language: "java", version: "15.0.2" },
+  javascript: { language: "javascript", version: "18.15.0" },
+  typescript: { language: "typescript", version: "5.0.3" },
+  csharp: { language: "csharp", version: "6.12.0" },
+  go: { language: "go", version: "1.16.2" },
+  rust: { language: "rust", version: "1.68.2" },
+  ruby: { language: "ruby", version: "3.0.1" },
+  kotlin: { language: "kotlin", version: "1.8.20" },
+  swift: { language: "swift", version: "5.3.3" },
 };
 
-// Fallback local execution for when Judge0 is not available
-async function executeLocally(code: string, language: string, input: string): Promise<{
-  stdout: string;
-  stderr: string;
-  status: string;
-  time: string;
-  memory: string;
-}> {
-  // For security, we'll simulate execution by pattern matching
-  // This is a simplified version - in production, use sandboxed execution
-  
-  try {
-    // Simulate compilation/execution
-    const result = simulateExecution(code, language, input);
-    return {
-      stdout: result.output,
-      stderr: result.error,
-      status: result.error ? "Runtime Error" : "Accepted",
-      time: "0.01s",
-      memory: "1024 KB",
-    };
-  } catch (error) {
-    return {
-      stdout: "",
-      stderr: error instanceof Error ? error.message : "Execution failed",
-      status: "Runtime Error",
-      time: "0s",
-      memory: "0 KB",
-    };
-  }
-}
-
-function simulateExecution(code: string, language: string, input: string): { output: string; error: string } {
-  // Basic syntax validation
-  const codeLower = code.toLowerCase();
-  
-  // Check for dangerous operations
-  const dangerousPatterns = [
-    /import\s+os/i,
-    /import\s+subprocess/i,
-    /exec\s*\(/i,
-    /eval\s*\(/i,
-    /system\s*\(/i,
-    /__import__/i,
-    /open\s*\(/i,
-    /file\s*\(/i,
-  ];
-  
-  for (const pattern of dangerousPatterns) {
-    if (pattern.test(code)) {
-      return { output: "", error: "Potentially unsafe code detected" };
-    }
-  }
-  
-  // For demonstration, return a placeholder
-  // In production, this would use actual sandboxed execution
-  return {
-    output: "Code compiled successfully. For full execution, configure Judge0 API.",
-    error: "",
-  };
-}
-
-// Use Judge0 API for actual code execution
-async function executeWithJudge0(
-  code: string, 
-  languageId: number, 
+// Execute code using Piston API
+async function executeWithPiston(
+  code: string,
+  language: string,
   input: string
 ): Promise<{
-  stdout: string;
-  stderr: string;
-  compile_output: string;
-  status: { description: string };
+  output: string;
+  error: string;
+  status: string;
   time: string;
-  memory: number;
+  success: boolean;
 }> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  
-  // Add RapidAPI headers if using the hosted version
-  if (JUDGE0_API_KEY) {
-    headers["X-RapidAPI-Key"] = JUDGE0_API_KEY;
-    headers["X-RapidAPI-Host"] = JUDGE0_API_HOST;
+  const langConfig = PISTON_LANGUAGES[language];
+  if (!langConfig) {
+    return {
+      output: "",
+      error: `Unsupported language: ${language}`,
+      status: "Error",
+      time: "0s",
+      success: false,
+    };
   }
 
-  // Submit code for execution
-  const submitResponse = await fetch(`${JUDGE0_API_URL}/submissions?base64_encoded=true&wait=true`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      source_code: Buffer.from(code).toString("base64"),
-      language_id: languageId,
-      stdin: Buffer.from(input).toString("base64"),
-      cpu_time_limit: 5,
-      memory_limit: 128000,
-    }),
-  });
+  try {
+    const response = await fetch(PISTON_API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        language: langConfig.language,
+        version: langConfig.version,
+        files: [
+          {
+            name: getFileName(language),
+            content: code,
+          },
+        ],
+        stdin: input,
+        run_timeout: 10000, // 10 seconds max
+      }),
+    });
 
-  if (!submitResponse.ok) {
-    throw new Error(`Judge0 API error: ${submitResponse.status}`);
+    if (!response.ok) {
+      throw new Error(`Piston API error: ${response.status}`);
+    }
+
+    const result = await response.json();
+    
+    // Handle compile errors
+    if (result.compile && result.compile.code !== 0) {
+      return {
+        output: "",
+        error: result.compile.stderr || result.compile.output || "Compilation failed",
+        status: "Compilation Error",
+        time: "0s",
+        success: false,
+      };
+    }
+
+    // Handle runtime results
+    const runResult = result.run;
+    const hasError = runResult.stderr && runResult.stderr.trim().length > 0;
+    const hasOutput = runResult.stdout && runResult.stdout.trim().length > 0;
+
+    return {
+      output: runResult.stdout || "",
+      error: runResult.stderr || "",
+      status: hasError ? "Runtime Error" : (hasOutput ? "Accepted" : "No Output"),
+      time: "< 1s",
+      success: !hasError,
+    };
+  } catch (error) {
+    console.error("Piston API error:", error);
+    return {
+      output: "",
+      error: error instanceof Error ? error.message : "Execution failed",
+      status: "Error",
+      time: "0s",
+      success: false,
+    };
   }
+}
 
-  const result = await submitResponse.json();
-  
-  return {
-    stdout: result.stdout ? Buffer.from(result.stdout, "base64").toString() : "",
-    stderr: result.stderr ? Buffer.from(result.stderr, "base64").toString() : "",
-    compile_output: result.compile_output ? Buffer.from(result.compile_output, "base64").toString() : "",
-    status: result.status || { description: "Unknown" },
-    time: result.time || "0",
-    memory: result.memory || 0,
+// Get appropriate file name for language
+function getFileName(language: string): string {
+  const fileNames: Record<string, string> = {
+    python: "main.py",
+    cpp: "main.cpp",
+    c: "main.c",
+    java: "Main.java",
+    javascript: "main.js",
+    typescript: "main.ts",
+    csharp: "Main.cs",
+    go: "main.go",
+    rust: "main.rs",
+    ruby: "main.rb",
+    kotlin: "Main.kt",
+    swift: "main.swift",
   };
+  return fileNames[language] || "main.txt";
 }
 
 export async function POST(request: NextRequest) {
@@ -163,8 +150,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const languageId = LANGUAGE_IDS[language];
-    if (!languageId) {
+    // Check if language is supported
+    if (!PISTON_LANGUAGES[language]) {
       return NextResponse.json(
         { success: false, message: `Unsupported language: ${language}` },
         { status: 400 }
@@ -184,51 +171,19 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    let result;
+    // Execute code using Piston API
+    const pistonResult = await executeWithPiston(code, language, input);
 
-    // Try Judge0 API first, fallback to local simulation
-    if (JUDGE0_API_KEY) {
-      try {
-        const judge0Result = await executeWithJudge0(code, languageId, input);
-        result = {
-          success: true,
-          output: judge0Result.stdout,
-          error: judge0Result.stderr || judge0Result.compile_output,
-          status: judge0Result.status.description,
-          time: `${judge0Result.time}s`,
-          memory: `${Math.round(judge0Result.memory / 1024)} KB`,
-          input: input,
-          expectedOutput: expectedOutput,
-        };
-      } catch (error) {
-        console.error("Judge0 API error:", error);
-        // Fallback to local execution
-        const localResult = await executeLocally(code, language, input);
-        result = {
-          success: true,
-          output: localResult.stdout,
-          error: localResult.stderr,
-          status: localResult.status,
-          time: localResult.time,
-          memory: localResult.memory,
-          input: input,
-          expectedOutput: expectedOutput,
-        };
-      }
-    } else {
-      // No API key, use local simulation
-      const localResult = await executeLocally(code, language, input);
-      result = {
-        success: true,
-        output: localResult.stdout,
-        error: localResult.stderr,
-        status: localResult.status,
-        time: localResult.time,
-        memory: localResult.memory,
-        input: input,
-        expectedOutput: expectedOutput,
-      };
-    }
+    const result = {
+      success: pistonResult.success,
+      output: pistonResult.output.trim(),
+      error: pistonResult.error.trim(),
+      status: pistonResult.status,
+      time: pistonResult.time,
+      memory: "N/A",
+      input: input,
+      expectedOutput: expectedOutput,
+    };
 
     return NextResponse.json(result);
   } catch (error) {
@@ -248,9 +203,9 @@ export async function POST(request: NextRequest) {
 export async function GET() {
   return NextResponse.json({
     success: true,
-    languages: Object.entries(LANGUAGE_IDS).map(([name, id]) => ({
+    languages: Object.entries(PISTON_LANGUAGES).map(([name, config]) => ({
       name,
-      id,
+      version: config.version,
       displayName: name.charAt(0).toUpperCase() + name.slice(1),
     })),
   });

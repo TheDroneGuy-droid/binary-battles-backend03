@@ -112,8 +112,10 @@ export default function TeamPage() {
   const tabViolationsRef = useRef(0);
   const competitionActiveRef = useRef(false);
   const hasRedirected = useRef(false);
+  const retryCountRef = useRef(0);
+  const maxRetries = 3;
 
-  // Fetch team data
+  // Fetch team data with retry logic for session establishment
   const fetchData = useCallback(async () => {
     if (hasRedirected.current) return;
     
@@ -134,6 +136,15 @@ export default function TeamPage() {
           return;
         }
         
+        // On 401/no_session, retry a few times before redirecting
+        // This handles the race condition when redirecting from login
+        if (data.reason === "no_session" && retryCountRef.current < maxRetries) {
+          retryCountRef.current += 1;
+          console.log(`Session not ready, retrying (${retryCountRef.current}/${maxRetries})...`);
+          await new Promise(resolve => setTimeout(resolve, 500)); // Wait 500ms
+          return fetchData(); // Retry
+        }
+        
         hasRedirected.current = true;
         
         if (data.reason === "is_admin") {
@@ -143,6 +154,9 @@ export default function TeamPage() {
         }
         return;
       }
+      
+      // Reset retry count on success
+      retryCountRef.current = 0;
       
       // Clear ban state if previously banned but now unbanned
       setIsBanned(false);

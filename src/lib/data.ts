@@ -574,7 +574,96 @@ export interface TestCaseResult {
   error?: string;
 }
 
-// Run test cases against submitted code
+// Piston API - Free code execution API (no API key required)
+const PISTON_API_URL = "https://emkc.org/api/v2/piston/execute";
+
+// Language configurations for Piston API
+const PISTON_LANGUAGES: Record<string, { language: string; version: string; fileName: string }> = {
+  python: { language: "python", version: "3.10.0", fileName: "main.py" },
+  cpp: { language: "c++", version: "10.2.0", fileName: "main.cpp" },
+  c: { language: "c", version: "10.2.0", fileName: "main.c" },
+  java: { language: "java", version: "15.0.2", fileName: "Main.java" },
+  javascript: { language: "javascript", version: "18.15.0", fileName: "main.js" },
+};
+
+// Execute code using Piston API
+async function executeWithPiston(
+  code: string,
+  language: string,
+  input: string
+): Promise<{
+  output: string;
+  error: string;
+  success: boolean;
+  time: string;
+}> {
+  const langConfig = PISTON_LANGUAGES[language];
+  if (!langConfig) {
+    return {
+      output: "",
+      error: `Unsupported language: ${language}`,
+      success: false,
+      time: "0ms",
+    };
+  }
+
+  try {
+    const response = await fetch(PISTON_API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        language: langConfig.language,
+        version: langConfig.version,
+        files: [
+          {
+            name: langConfig.fileName,
+            content: code,
+          },
+        ],
+        stdin: input,
+        run_timeout: 10000,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Piston API error: ${response.status}`);
+    }
+
+    const result = await response.json();
+
+    // Handle compile errors
+    if (result.compile && result.compile.code !== 0) {
+      return {
+        output: "",
+        error: result.compile.stderr || result.compile.output || "Compilation failed",
+        success: false,
+        time: "0ms",
+      };
+    }
+
+    // Handle runtime results
+    const runResult = result.run;
+    const hasError = runResult.stderr && runResult.stderr.trim().length > 0;
+
+    return {
+      output: (runResult.stdout || "").trim(),
+      error: (runResult.stderr || "").trim(),
+      success: !hasError,
+      time: "< 100ms",
+    };
+  } catch (error) {
+    return {
+      output: "",
+      error: error instanceof Error ? error.message : "Execution failed",
+      success: false,
+      time: "0ms",
+    };
+  }
+}
+
+// Run test cases against submitted code using Piston API
 export async function runTestCases(
   code: string,
   language: string,
@@ -586,20 +675,25 @@ export async function runTestCases(
     const testCase = problem.testCases[i];
     
     try {
-      // Simulate running the test case
-      const result = simulateTestCase(code, language, testCase, problem);
+      // Execute code with Piston API
+      const result = await executeWithPiston(code, language, testCase.input);
+      
+      // Normalize outputs for comparison (trim whitespace and normalize line endings)
+      const actualOutput = result.output.replace(/\r\n/g, "\n").trim();
+      const expectedOutput = testCase.expectedOutput.replace(/\r\n/g, "\n").trim();
+      const passed = result.success && actualOutput === expectedOutput;
       
       results.push({
         testCaseNumber: i + 1,
         input: testCase.isHidden ? "[Hidden]" : testCase.input,
         expectedOutput: testCase.isHidden ? "[Hidden]" : testCase.expectedOutput,
-        actualOutput: testCase.isHidden ? "[Hidden]" : result.output,
-        passed: result.passed,
+        actualOutput: testCase.isHidden ? (passed ? "[Correct]" : "[Wrong]") : actualOutput,
+        passed: passed,
         isHidden: testCase.isHidden,
         points: testCase.points,
-        earnedPoints: result.passed ? testCase.points : 0,
+        earnedPoints: passed ? testCase.points : 0,
         executionTime: result.time,
-        error: result.error,
+        error: result.error || undefined,
       });
     } catch (error) {
       results.push({
@@ -617,60 +711,6 @@ export async function runTestCases(
   }
   
   return results;
-}
-
-// Simulate running a test case (pattern-based validation)
-function simulateTestCase(
-  code: string,
-  language: string,
-  testCase: TestCase,
-  problem: Problem
-): { passed: boolean; output: string; time: string; error?: string } {
-  const codeLower = code.toLowerCase();
-  const langConfig = languageConfigs[language] || languageConfigs.python;
-  
-  // Basic validation
-  if (code.length < 10) {
-    return { passed: false, output: "", time: "0ms", error: "Code too short" };
-  }
-  
-  // Check for I/O operations
-  const hasInput = langConfig.inputPatterns.some(p => codeLower.includes(p.toLowerCase()));
-  const hasOutput = langConfig.outputPatterns.some(p => codeLower.includes(p.toLowerCase()));
-  
-  if (!hasInput || !hasOutput) {
-    return { passed: false, output: "", time: "0ms", error: "Missing input/output operations" };
-  }
-  
-  // Problem-specific keyword checks for basic validation
-  const problemKeywords: Record<number, string[]> = {
-    1: ["sum", "subarray", "prefix", "target", "for", "while", "range", "array", "list"],
-    2: ["pattern", "match", "find", "search", "for", "while", "if", "string", "char"],
-    3: ["encode", "decode", "xor", "stack", "push", "pop", "append", "list", "array"],
-    4: ["graph", "dijkstra", "path", "distance", "queue", "heap", "bfs", "dfs", "dict", "defaultdict"],
-  };
-  
-  const keywords = problemKeywords[problem.id] || [];
-  const hasRelevantCode = keywords.some(kw => codeLower.includes(kw)) || code.length > 100;
-  
-  if (!hasRelevantCode) {
-    return { passed: false, output: "", time: "0ms", error: "Solution may not address the problem" };
-  }
-  
-  // For simulation, check code structure and pass reasonable submissions
-  const hasLoops = codeLower.includes("for") || codeLower.includes("while");
-  const hasConditions = codeLower.includes("if");
-  const codeLength = code.length;
-  
-  // More lenient passing criteria based on code structure
-  const structureScore = (hasLoops ? 30 : 0) + (hasConditions ? 20 : 0) + (codeLength > 200 ? 30 : codeLength > 100 ? 20 : 10);
-  const passed = structureScore >= 50;
-  
-  return {
-    passed,
-    output: passed ? testCase.expectedOutput : "Wrong Answer",
-    time: `${Math.floor(Math.random() * 50 + 10)}ms`,
-  };
 }
 
 // Auto-correction function with comprehensive test case evaluation
