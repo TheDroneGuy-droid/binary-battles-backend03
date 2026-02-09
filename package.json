@@ -1,7 +1,7 @@
 {
   "name": "binary-battles-nextjs",
   "version": "1.0.0",
-  "description": "Binary Battles 0.3 - Modern Coding Competition with Next.js",
+  "description": "Binary Battles 3.0 - Modern Coding Competition with Next.js",
   "private": true,
   "scripts": {
     "dev": "next dev",

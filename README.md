@@ -1,4 +1,4 @@
-# Binary Battles 0.3 - Next.js Version
+# Binary Battles 3.0 - Next.js Version
 
 A modern, fullstack React-based coding competition platform built with Next.js.
 
