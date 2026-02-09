@@ -192,7 +192,7 @@ export default function LoginPage() {
           </form>
         </div>
       </div>
-      <div className="dev-footer">developed by NEVIN</div>
+      <div className="dev-footer">developed by students of VIT</div>
     </>
   );
 }

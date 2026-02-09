@@ -1288,7 +1288,7 @@ export default function AdminPage() {
           </>
         )}
       </div>
-      <div className="dev-footer">developed by NEVIN</div>
+      <div className="dev-footer">developed by students of VIT</div>
     </>
   );
 }
