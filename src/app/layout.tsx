@@ -1,16 +1,25 @@
 import type { Metadata } from "next";
-import { Roboto_Condensed } from "next/font/google";
+import { Orbitron, Inter } from "next/font/google";
 import "./globals.css";
 
-const robotoCondensed = Roboto_Condensed({
-  weight: ["300", "400", "700"],
+const orbitron = Orbitron({
+  weight: ["400", "500", "600", "700", "800", "900"],
   subsets: ["latin"],
-  variable: "--font-roboto-condensed",
+  variable: "--font-orbitron",
+});
+
+const inter = Inter({
+  weight: ["300", "400", "500", "600", "700"],
+  subsets: ["latin"],
+  variable: "--font-inter",
 });
 
 export const metadata: Metadata = {
-  title: "Binary Battles 0.3",
-  description: "Modern Coding Competition Platform",
+  title: "Binary Battles 3.0",
+  description: "Elite Coding Competition Platform - VIT",
+  icons: {
+    icon: "/logo.png",
+  },
 };
 
 export default function RootLayout({
@@ -20,7 +29,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className={robotoCondensed.variable}>{children}</body>
+      <body className={`${orbitron.variable} ${inter.variable}`}>{children}</body>
     </html>
   );
 }

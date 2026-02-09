@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import Image from "next/image";
 
 interface Problem {
   id: number;
@@ -16,7 +17,6 @@ interface Problem {
 interface TeamData {
   score: number;
   solved: number[];
-  failed: number[];
 }
 
 interface LeaderboardEntry {
@@ -43,7 +43,6 @@ export default function TeamPage() {
   const [teamData, setTeamData] = useState<TeamData>({
     score: 0,
     solved: [],
-    failed: [],
   });
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [competition, setCompetition] = useState<CompetitionState>({
@@ -327,7 +326,14 @@ export default function TeamPage() {
 
       <div className="container">
         <div className="header">
-          <h1>Binary Battles</h1>
+          <Image 
+            src="/logo.png" 
+            alt="Binary Battles 3.0" 
+            width={80} 
+            height={80}
+            className="header-logo"
+          />
+          <h1>Binary Battles 3.0</h1>
           <p>Team: {teamName} | Score: {teamData.score} pts</p>
         </div>
 
@@ -336,8 +342,7 @@ export default function TeamPage() {
           <h3>Problems:</h3>
           {problems.map((p) => {
             const isSolved = teamData.solved?.includes(p.id);
-            const isFailed = teamData.failed?.includes(p.id);
-            const statusClass = isSolved ? "solved" : isFailed ? "failed" : "";
+            const statusClass = isSolved ? "solved" : "";
             return (
               <div
                 key={p.id}
@@ -357,14 +362,13 @@ export default function TeamPage() {
           <div className="problems-sidebar">
             {problems.map((problem) => {
               const isSolved = teamData.solved?.includes(problem.id);
-              const isFailed = teamData.failed?.includes(problem.id);
               return (
                 <div
                   key={problem.id}
                   className={`problem-list-item ${selectedProblem === problem.id ? "active" : ""}`}
                   onClick={() => setSelectedProblem(problem.id)}
                 >
-                  <span className={`problem-number ${isSolved ? "solved" : isFailed ? "failed" : ""}`}>
+                  <span className={`problem-number ${isSolved ? "solved" : ""}`}>
                     {isSolved ? "✓" : problem.id}
                   </span>
                   <span className="problem-title">{problem.title}</span>

@@ -1,6 +1,7 @@
 "use client";
 
 import Script from "next/script";
+import Image from "next/image";
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 
@@ -162,8 +163,16 @@ export default function LoginPage() {
 
       <div className="container">
         <div className="header">
-          <h1>Binary Battles 0.3</h1>
-          <p>Timed Coding Competition</p>
+          <Image 
+            src="/logo.png" 
+            alt="Binary Battles 3.0" 
+            width={120} 
+            height={120}
+            className="header-logo-large"
+            priority
+          />
+          <h1>Binary Battles 3.0</h1>
+          <p>Elite Coding Competition</p>
         </div>
 
         <div className="login-container">

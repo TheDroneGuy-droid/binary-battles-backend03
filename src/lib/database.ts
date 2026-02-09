@@ -518,16 +518,19 @@ export function validateTeamCredentials(
   identifier: string,
   password: string
 ): { valid: boolean; isAdmin: boolean; isMasterAdmin: boolean; actualName: string } {
+  // Normalize the identifier - trim and convert to lowercase for comparison
+  const normalizedIdentifier = identifier.trim().toLowerCase();
+  
   // Try to find team by name first (for admin login)
   let team = db
-    .prepare("SELECT name, password, is_admin, is_master_admin FROM teams WHERE LOWER(name) = LOWER(?)")
-    .get(identifier) as { name: string; password: string; is_admin: number; is_master_admin?: number } | undefined;
+    .prepare("SELECT name, password, is_admin, is_master_admin FROM teams WHERE LOWER(name) = ?")
+    .get(normalizedIdentifier) as { name: string; password: string; is_admin: number; is_master_admin?: number } | undefined;
 
-  // If not found by name, try by registration number
+  // If not found by name, try by EXACT registration number match
   if (!team) {
     team = db
-      .prepare("SELECT name, password, is_admin, is_master_admin FROM teams WHERE registration_numbers LIKE ? OR registration_numbers = ?")
-      .get(`%${identifier}%`, identifier) as { name: string; password: string; is_admin: number; is_master_admin?: number } | undefined;
+      .prepare("SELECT name, password, is_admin, is_master_admin FROM teams WHERE LOWER(registration_numbers) = ?")
+      .get(normalizedIdentifier) as { name: string; password: string; is_admin: number; is_master_admin?: number } | undefined;
   }
 
   if (!team) {
