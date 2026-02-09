@@ -4,6 +4,10 @@ import { sessionOptions, SessionData, generateSessionId } from "@/lib/session";
 import { validateTeamCredentials, isTeamBanned } from "@/lib/database";
 import { cookies } from "next/headers";
 
+// Disable caching for login endpoint
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 // Simple in-memory rate limiting to prevent brute force attacks
 const loginAttempts: Map<string, { count: number; lastAttempt: number }> = new Map();
 const MAX_ATTEMPTS = 5;

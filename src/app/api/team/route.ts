@@ -5,6 +5,10 @@ import { getTeam, getLeaderboard, isTeamBanned } from "@/lib/database";
 import { problems } from "@/lib/data";
 import { cookies } from "next/headers";
 
+// Disable caching for team endpoint
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export async function GET() {
   try {
     const session = await getIronSession<SessionData>(await cookies(), sessionOptions);

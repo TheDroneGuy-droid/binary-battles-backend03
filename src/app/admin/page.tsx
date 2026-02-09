@@ -121,12 +121,31 @@ export default function AdminPage() {
     if (hasRedirected.current) return;
     
     try {
-      const res = await fetch("/api/admin");
+      const res = await fetch("/api/admin", {
+        credentials: "include", // Ensure cookies are sent
+        cache: "no-store", // Don't cache
+      });
+      
+      // Only redirect on 401 (unauthorized), not on other errors
+      if (res.status === 401) {
+        hasRedirected.current = true;
+        router.replace("/");
+        return;
+      }
+      
+      if (!res.ok) {
+        console.error("Admin API error:", res.status);
+        return; // Don't redirect on other errors, just log and retry
+      }
+      
       const data = await res.json();
 
       if (!data.success) {
-        hasRedirected.current = true;
-        router.replace("/");
+        // Only redirect on explicit auth failure
+        if (data.message === "Unauthorized") {
+          hasRedirected.current = true;
+          router.replace("/");
+        }
         return;
       }
 
@@ -167,10 +186,18 @@ export default function AdminPage() {
         isFirstLoad.current = false;
       }
       setLoading(false);
-    } catch {
-      if (!hasRedirected.current) {
-        hasRedirected.current = true;
-        router.replace("/");
+    } catch (error) {
+      // Only log network errors, don't redirect (could be temporary network issue)
+      console.error("Fetch error:", error);
+      // Only redirect on first load if there's an error (initial auth check)
+      if (isFirstLoad.current && !hasRedirected.current) {
+        // Give a small delay before redirecting on initial load failure
+        setTimeout(() => {
+          if (!hasRedirected.current) {
+            hasRedirected.current = true;
+            router.replace("/");
+          }
+        }, 3000);
       }
     }
   }, [router]);
