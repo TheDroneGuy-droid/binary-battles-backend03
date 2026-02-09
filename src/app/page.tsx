@@ -1,7 +1,6 @@
 "use client";
 
 import Script from "next/script";
-import Image from "next/image";
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 
@@ -169,14 +168,22 @@ export default function LoginPage() {
 
       <div className="container">
         <div className="header">
-          <Image 
-            src="/logo.png" 
-            alt="Binary Battles 3.0" 
-            width={120} 
-            height={120}
-            className="header-logo-large"
-            priority
-          />
+          <div 
+            style={{
+              width: 100,
+              height: 100,
+              background: "linear-gradient(135deg, #00d9ff, #ff6347)",
+              borderRadius: "50%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: "36px",
+              fontWeight: 700,
+              marginBottom: "12px",
+            }}
+          >
+            BB
+          </div>
           <h1>Binary Battles 3.0</h1>
           <p>Elite Coding Competition - Round 3: Code Relay</p>
         </div>

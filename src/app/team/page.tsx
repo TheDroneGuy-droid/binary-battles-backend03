@@ -55,13 +55,20 @@ interface CompileResult {
   status?: string;
   time?: string;
   memory?: string;
+  input?: string;
+  expectedOutput?: string;
 }
 
 interface TestCaseResult {
   testCaseNumber: number;
+  input: string;
+  expectedOutput: string;
+  actualOutput: string;
   passed: boolean;
   isHidden: boolean;
+  points: number;
   earnedPoints: number;
+  executionTime?: string;
   error?: string;
 }
 
@@ -92,7 +99,7 @@ export default function TeamPage() {
   const [isBanned, setIsBanned] = useState(false);
   const [banMessage, setBanMessage] = useState("");
   const [compileResult, setCompileResult] = useState<CompileResult | null>(null);
-  const [customInput, setCustomInput] = useState("");
+
   const [showCompiler, setShowCompiler] = useState(false);
   const [testResults, setTestResults] = useState<TestCaseResult[]>([]);
   const [runningTests, setRunningTests] = useState(false);
@@ -138,10 +145,8 @@ export default function TeamPage() {
       }
       
       // Clear ban state if previously banned but now unbanned
-      if (isBanned) {
-        setIsBanned(false);
-        setBanMessage("");
-      }
+      setIsBanned(false);
+      setBanMessage("");
 
       setTeamName(data.teamName);
       setProblems(data.problems);
@@ -152,15 +157,17 @@ export default function TeamPage() {
       if (data.teamData.selectedProblem) {
         setSelectedProblem(data.teamData.selectedProblem);
         setProblemLocked(true);
-      } else if (selectedProblem === null && data.problems.length > 0) {
-        setSelectedProblem(data.problems[0].id);
+      } else {
+        // Only set default problem on first load
+        setSelectedProblem(prev => prev === null && data.problems.length > 0 ? data.problems[0].id : prev);
       }
       
       setLoading(false);
     } catch (error) {
       console.error("Fetch error:", error);
     }
-  }, [router, isBanned, selectedProblem]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router]);
 
   // Fetch competition status
   const fetchCompetition = useCallback(async () => {
@@ -278,7 +285,7 @@ export default function TeamPage() {
         body: JSON.stringify({
           code: codes[selectedProblem] || "",
           language: languages[selectedProblem] || "python",
-          input: customInput,
+          problemId: selectedProblem,
         }),
         credentials: "include",
       });
@@ -475,35 +482,6 @@ export default function TeamPage() {
           </p>
         </div>
 
-        {/* Problem Selection Notice */}
-        {!problemLocked && (
-          <div style={{
-            background: "rgba(255, 193, 7, 0.2)",
-            border: "1px solid rgba(255, 193, 7, 0.5)",
-            borderRadius: "8px",
-            padding: "12px 16px",
-            marginBottom: "16px",
-            fontSize: "14px",
-          }}>
-            <strong>📋 Important:</strong> You can only attempt ONE problem. Choose carefully! 
-            Once you submit, the problem will be locked.
-          </div>
-        )}
-
-        {problemLocked && (
-          <div style={{
-            background: "rgba(0, 217, 255, 0.2)",
-            border: "1px solid rgba(0, 217, 255, 0.5)",
-            borderRadius: "8px",
-            padding: "12px 16px",
-            marginBottom: "16px",
-            fontSize: "14px",
-          }}>
-            <strong>🔒 Problem Locked:</strong> You have selected Problem {selectedProblem}. 
-            Continue working on this problem.
-          </div>
-        )}
-
         {/* Problem Status Overview */}
         <div className="problem-status">
           <h3>Problems:</h3>
@@ -552,11 +530,6 @@ export default function TeamPage() {
                     {isSolved ? "✓" : isLocked ? "🔒" : problem.id}
                   </span>
                   <span className="problem-title">{problem.title}</span>
-                  {problem.difficulty && (
-                    <span className={`difficulty-badge ${problem.difficulty}`}>
-                      {problem.difficulty}
-                    </span>
-                  )}
                 </div>
               );
             })}
@@ -660,29 +633,6 @@ export default function TeamPage() {
                     }}>
                       <h4 style={{ marginBottom: "12px" }}>🖥️ Compiler & Test Runner</h4>
                       
-                      <div style={{ marginBottom: "12px" }}>
-                        <label style={{ fontSize: "13px", marginBottom: "4px", display: "block" }}>
-                          Custom Input (optional):
-                        </label>
-                        <textarea
-                          value={customInput}
-                          onChange={(e) => setCustomInput(e.target.value)}
-                          placeholder="Enter custom input for testing..."
-                          style={{
-                            width: "100%",
-                            height: "80px",
-                            background: "var(--bg-primary)",
-                            border: "1px solid var(--border-color)",
-                            borderRadius: "6px",
-                            padding: "8px",
-                            color: "var(--text-primary)",
-                            fontFamily: "monospace",
-                            fontSize: "13px",
-                            resize: "vertical",
-                          }}
-                        />
-                      </div>
-                      
                       <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
                         <button
                           className="btn btn-small"
@@ -711,29 +661,75 @@ export default function TeamPage() {
                           padding: "12px",
                           marginBottom: "12px",
                         }}>
-                          <div style={{ fontWeight: 600, marginBottom: "8px" }}>
-                            Status: {compileResult.status || (compileResult.success ? "Success" : "Error")}
-                          </div>
-                          {compileResult.output && (
-                            <pre style={{ 
-                              background: "rgba(0,0,0,0.2)", 
-                              padding: "8px", 
-                              borderRadius: "4px",
-                              whiteSpace: "pre-wrap",
-                              fontSize: "13px",
+                          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "12px" }}>
+                            <span style={{ fontWeight: 600 }}>Compile & Run Result</span>
+                            <span style={{ 
+                              color: compileResult.error ? "#f44336" : "#4caf50",
+                              fontWeight: 600,
                             }}>
-                              {compileResult.output}
-                            </pre>
-                          )}
-                          {compileResult.error && (
+                              {compileResult.status || (compileResult.success ? "Success" : "Error")}
+                            </span>
+                          </div>
+                          
+                          {compileResult.error ? (
                             <pre style={{ 
                               color: "#f44336",
                               whiteSpace: "pre-wrap",
                               fontSize: "13px",
+                              background: "rgba(0,0,0,0.2)",
+                              padding: "8px",
+                              borderRadius: "4px",
                             }}>
                               {compileResult.error}
                             </pre>
+                          ) : (
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "8px", fontSize: "12px" }}>
+                              <div>
+                                <div style={{ color: "var(--text-muted)", marginBottom: "4px" }}>Input (Test Case 1):</div>
+                                <pre style={{ 
+                                  background: "rgba(0,0,0,0.3)", 
+                                  padding: "6px", 
+                                  borderRadius: "4px",
+                                  margin: 0,
+                                  whiteSpace: "pre-wrap",
+                                  maxHeight: "80px",
+                                  overflow: "auto",
+                                }}>
+                                  {compileResult.input || "No input"}
+                                </pre>
+                              </div>
+                              <div>
+                                <div style={{ color: "var(--text-muted)", marginBottom: "4px" }}>Expected Output:</div>
+                                <pre style={{ 
+                                  background: "rgba(0,0,0,0.3)", 
+                                  padding: "6px", 
+                                  borderRadius: "4px",
+                                  margin: 0,
+                                  whiteSpace: "pre-wrap",
+                                  maxHeight: "80px",
+                                  overflow: "auto",
+                                }}>
+                                  {compileResult.expectedOutput || "N/A"}
+                                </pre>
+                              </div>
+                              <div>
+                                <div style={{ color: "var(--text-muted)", marginBottom: "4px" }}>Your Output:</div>
+                                <pre style={{ 
+                                  background: "rgba(0,0,0,0.3)", 
+                                  padding: "6px", 
+                                  borderRadius: "4px",
+                                  margin: 0,
+                                  whiteSpace: "pre-wrap",
+                                  maxHeight: "80px",
+                                  overflow: "auto",
+                                  color: compileResult.output === compileResult.expectedOutput ? "#4caf50" : "#ffc107",
+                                }}>
+                                  {compileResult.output || "No output"}
+                                </pre>
+                              </div>
+                            </div>
                           )}
+                          
                           {compileResult.time && (
                             <div style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "8px" }}>
                               Time: {compileResult.time} | Memory: {compileResult.memory}
@@ -742,39 +738,93 @@ export default function TeamPage() {
                         </div>
                       )}
 
-                      {/* Test Results */}
+                      {/* Test Results - First 5 Test Cases */}
                       {testResults.length > 0 && (
                         <div style={{
                           background: "rgba(0,0,0,0.2)",
                           borderRadius: "6px",
                           padding: "12px",
                         }}>
-                          <div style={{ fontWeight: 600, marginBottom: "8px" }}>
+                          <div style={{ fontWeight: 600, marginBottom: "12px" }}>
                             Test Results: {testResults.filter(r => r.passed).length}/{testResults.length} passed
                           </div>
-                          <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
-                            {testResults.map((result) => (
+                          
+                          {/* Show first 5 test cases with details */}
+                          <div style={{ display: "flex", flexDirection: "column", gap: "12px", marginBottom: "12px" }}>
+                            {testResults.slice(0, 5).map((result) => (
                               <div
                                 key={result.testCaseNumber}
-                                title={result.isHidden ? "Hidden test case" : `Test ${result.testCaseNumber}`}
                                 style={{
-                                  width: "24px",
-                                  height: "24px",
-                                  borderRadius: "4px",
-                                  display: "flex",
-                                  alignItems: "center",
-                                  justifyContent: "center",
-                                  fontSize: "11px",
-                                  fontWeight: 600,
-                                  background: result.passed ? "rgba(76, 175, 80, 0.3)" : "rgba(244, 67, 54, 0.3)",
-                                  color: result.passed ? "#4caf50" : "#f44336",
-                                  border: result.isHidden ? "1px dashed currentColor" : "none",
+                                  background: result.passed ? "rgba(76, 175, 80, 0.1)" : "rgba(244, 67, 54, 0.1)",
+                                  border: `1px solid ${result.passed ? "rgba(76, 175, 80, 0.3)" : "rgba(244, 67, 54, 0.3)"}`,
+                                  borderRadius: "6px",
+                                  padding: "10px",
                                 }}
                               >
-                                {result.passed ? "✓" : "✗"}
+                                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
+                                  <span style={{ fontWeight: 600 }}>Test Case {result.testCaseNumber}</span>
+                                  <span style={{ 
+                                    color: result.passed ? "#4caf50" : "#f44336",
+                                    fontWeight: 600,
+                                  }}>
+                                    {result.passed ? "✓ Passed" : "✗ Failed"}
+                                  </span>
+                                </div>
+                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "8px", fontSize: "12px" }}>
+                                  <div>
+                                    <div style={{ color: "var(--text-muted)", marginBottom: "4px" }}>Input:</div>
+                                    <pre style={{ 
+                                      background: "rgba(0,0,0,0.3)", 
+                                      padding: "6px", 
+                                      borderRadius: "4px",
+                                      margin: 0,
+                                      whiteSpace: "pre-wrap",
+                                      maxHeight: "60px",
+                                      overflow: "auto",
+                                    }}>
+                                      {result.input}
+                                    </pre>
+                                  </div>
+                                  <div>
+                                    <div style={{ color: "var(--text-muted)", marginBottom: "4px" }}>Expected Output:</div>
+                                    <pre style={{ 
+                                      background: "rgba(0,0,0,0.3)", 
+                                      padding: "6px", 
+                                      borderRadius: "4px",
+                                      margin: 0,
+                                      whiteSpace: "pre-wrap",
+                                      maxHeight: "60px",
+                                      overflow: "auto",
+                                    }}>
+                                      {result.expectedOutput}
+                                    </pre>
+                                  </div>
+                                  <div>
+                                    <div style={{ color: "var(--text-muted)", marginBottom: "4px" }}>Your Output:</div>
+                                    <pre style={{ 
+                                      background: "rgba(0,0,0,0.3)", 
+                                      padding: "6px", 
+                                      borderRadius: "4px",
+                                      margin: 0,
+                                      whiteSpace: "pre-wrap",
+                                      maxHeight: "60px",
+                                      overflow: "auto",
+                                      color: result.passed ? "#4caf50" : "#f44336",
+                                    }}>
+                                      {result.actualOutput || result.error || "No output"}
+                                    </pre>
+                                  </div>
+                                </div>
                               </div>
                             ))}
                           </div>
+                          
+                          {/* Summary for remaining test cases */}
+                          {testResults.length > 5 && (
+                            <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>
+                              + {testResults.length - 5} more test cases ({testResults.slice(5).filter(r => r.passed).length} passed, {testResults.slice(5).filter(r => !r.passed).length} failed)
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -913,25 +963,6 @@ export default function TeamPage() {
         .criteria-value {
           font-weight: 600;
           color: var(--accent-primary);
-        }
-        .difficulty-badge {
-          font-size: 10px;
-          padding: 2px 6px;
-          border-radius: 4px;
-          text-transform: uppercase;
-          font-weight: 600;
-        }
-        .difficulty-badge.easy {
-          background: rgba(76, 175, 80, 0.2);
-          color: #4caf50;
-        }
-        .difficulty-badge.medium {
-          background: rgba(255, 193, 7, 0.2);
-          color: #ffc107;
-        }
-        .difficulty-badge.hard {
-          background: rgba(244, 67, 54, 0.2);
-          color: #f44336;
         }
       `}</style>
     </>

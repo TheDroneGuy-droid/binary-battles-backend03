@@ -17,9 +17,6 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "Binary Battles 3.0",
   description: "Elite Coding Competition Platform - VIT",
-  icons: {
-    icon: "/logo.png",
-  },
 };
 
 export default function RootLayout({

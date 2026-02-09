@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getIronSession } from "iron-session";
 import { sessionOptions, SessionData } from "@/lib/session";
 import { cookies } from "next/headers";
+import { problems } from "@/lib/data";
 
 // Disable caching
 export const dynamic = "force-dynamic";
@@ -153,7 +154,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { code, language, input } = await request.json();
+    const { code, language, problemId } = await request.json();
 
     if (!code || !language) {
       return NextResponse.json(
@@ -170,12 +171,25 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Get the first test case input from the problem
+    let input = "";
+    let expectedOutput = "";
+    if (problemId) {
+      const problem = problems.find(p => p.id === parseInt(problemId));
+      if (problem && problem.testCases && problem.testCases.length > 0) {
+        // Use the first non-hidden test case
+        const firstTestCase = problem.testCases.find(tc => !tc.isHidden) || problem.testCases[0];
+        input = firstTestCase.input;
+        expectedOutput = firstTestCase.expectedOutput;
+      }
+    }
+
     let result;
 
     // Try Judge0 API first, fallback to local simulation
     if (JUDGE0_API_KEY) {
       try {
-        const judge0Result = await executeWithJudge0(code, languageId, input || "");
+        const judge0Result = await executeWithJudge0(code, languageId, input);
         result = {
           success: true,
           output: judge0Result.stdout,
@@ -183,11 +197,13 @@ export async function POST(request: NextRequest) {
           status: judge0Result.status.description,
           time: `${judge0Result.time}s`,
           memory: `${Math.round(judge0Result.memory / 1024)} KB`,
+          input: input,
+          expectedOutput: expectedOutput,
         };
       } catch (error) {
         console.error("Judge0 API error:", error);
         // Fallback to local execution
-        const localResult = await executeLocally(code, language, input || "");
+        const localResult = await executeLocally(code, language, input);
         result = {
           success: true,
           output: localResult.stdout,
@@ -195,11 +211,13 @@ export async function POST(request: NextRequest) {
           status: localResult.status,
           time: localResult.time,
           memory: localResult.memory,
+          input: input,
+          expectedOutput: expectedOutput,
         };
       }
     } else {
       // No API key, use local simulation
-      const localResult = await executeLocally(code, language, input || "");
+      const localResult = await executeLocally(code, language, input);
       result = {
         success: true,
         output: localResult.stdout,
@@ -207,6 +225,8 @@ export async function POST(request: NextRequest) {
         status: localResult.status,
         time: localResult.time,
         memory: localResult.memory,
+        input: input,
+        expectedOutput: expectedOutput,
       };
     }
 

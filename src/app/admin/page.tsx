@@ -1,7 +1,6 @@
 "use client";
 
 import Script from "next/script";
-import Image from "next/image";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -613,13 +612,22 @@ export default function AdminPage() {
 
       <div className="container">
         <div className="header">
-          <Image 
-            src="/logo.png" 
-            alt="Binary Battles 3.0" 
-            width={80} 
-            height={80}
-            className="header-logo"
-          />
+          <div 
+            style={{
+              width: 80,
+              height: 80,
+              background: "linear-gradient(135deg, #00d9ff, #ff6347)",
+              borderRadius: "50%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: "28px",
+              fontWeight: 700,
+              marginBottom: "8px",
+            }}
+          >
+            BB
+          </div>
           <h1>Binary Battles 3.0</h1>
           <p>Admin Control Panel</p>
         </div>
